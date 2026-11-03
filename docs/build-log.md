@@ -450,3 +450,42 @@ with 8 GiB it does not fit. **Fix:** 16 GiB for server VMs (default in
 
 Rerun of `servers.yml`: the first adopted the hand-made admin pod, the
 second `changed=0`.
+
+## Step 12: The GPU server (2026-11-03)
+
+`nico-server-02`: instance index 2, BMC `192.168.92.12`, 8 vCPU, 24 GiB (VFIO
+pins all of it), 120 GB, with the build machine's RTX 4080 SUPER and its audio
+function (`0000:01:00.0`, `0000:01:00.1`, already on vfio-pci, attached with
+`managed='no'`). The inventory adds it only when `nico_kvm_gpu_devices` is
+set (in the gitignored `local.yml`), so a host without a GPU gets just
+`nico-server-01`.
+
+**Failure 1:** `nico-netns@bmc-nico-server-02` failed: `Cannot find device
+"eth0"`. The script named the veth's host end `nn-<namespace>` cut to 15
+characters, the kernel's limit, so `bmc-nico-server-01` and `-02` both became
+`nn-bmc-nico-ser`; the second saw an existing link and skipped creating its
+own. **Fix:** `nn` plus 12 hex characters of a hash of the namespace name; a
+namespace without its host link is recreated, and a changed script restarts
+every lab namespace (the BMC and relay units are `PartOf` their namespace).
+
+**Failure 2:** the expected machine's chassis serial was wrong for index 2.
+The role built it as `0200000100NN`, which matched index 1 by chance;
+bmc-mock's pattern is `020000NN0001` (index 2: `020000020001`, read from a
+throwaway mock). **Fix:** the formula, before NICo ever saw the bad serial.
+
+NICo then ingested it like the first server, with the GPU in the VM the whole
+time: exploration, BIOS job, UEFI HTTP boot of scout, TPM discovery, cleanup,
+UEFI password, lockdown, **Ready** at 19:36, about 8 minutes after the BMC
+came up. A monitor on the RTX 4080's DisplayPort showed each stage on the
+server's own screen: OVMF's PXE attempts (`PXE-E21: Remote boot cancelled`;
+NICo serves HTTP boot, not TFTP), `HTTP Boot over IPv4` of `ipxe.efi`, NICo's
+iPXE banner (`nico v2.3.0-0-gabc446b`), `carbide-pxe.forge/.../scout.efi`
+(the `.forge` name answered by the lab's unbound), `Measured initrd data into
+PCR 9`, then scout's `Ubuntu 24.04.5 LTS 192-168-92-13 tty1` login prompt.
+
+Every reboot along the way was NICo's (`Host Power Control
+action=ForceRestart` in nico-api's log): after discovery (cleanup), for the
+UEFI password and for lockdown, the last at 19:35:49, 20 seconds before
+Ready. Each boot got the same `192.168.92.13`: NICo's DHCP keeps the address
+it first allocated to a MAC. When QEMU starts a VFIO VM it shows `paused`
+briefly while it pins the memory; that is not an error.

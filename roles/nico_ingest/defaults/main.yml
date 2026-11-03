@@ -20,7 +20,7 @@ nico_ingest_cert_min_hours: 2
 # Servers, as omerfsen.nico.nico_server describes them (name, index, bmc_ip).
 # The BMC MAC, host MAC and serial follow from the index (bmc-mock's Dell
 # R750 profile: BMC 02:00:00:NN:00:01, host 02:00:00:NN:00:02, serial
-# 0200000100NN).
+# 020000NN0001, NN the index in hex).
 nico_ingest_servers: []
 # bmc-mock's factory account (it accepts any credentials without
 # --redfish-auth; NICo rotates the password to the site's BMC root).
