@@ -614,3 +614,9 @@ have waited out its timeout. cloud-init's log: "Updating hostname to
 cloud-init prefers the FQDN it finds (NICo's DNS name for the address) over
 `hostname` from the user data; Ubuntu does not. **Fix:**
 `prefer_fqdn_over_hostname: false` in the user data.
+
+**Result:** with both fixes, server-02 was released and provisioned again:
+SSH as `rocky` answers with hostname `nico-rocky-02`, Rocky Linux 10.2
+(kernel 6.12.0-211.16.1.el10_2), root grown to 119G, the RTX 4080 (both PCI
+functions) present, and the boot on the GPU's display. Then a full
+`kvm.yml` rerun against the provisioned lab: `changed=0` on every host.
