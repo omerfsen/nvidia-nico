@@ -84,7 +84,7 @@
           '--bmc-mac-address', nico_ingest_bmc_mac,
           '--bmc-username', nico_ingest_bmc_username,
           '--bmc-password', nico_ingest_bmc_password,
-          '--chassis-serial-number', '0200000100%02x' | format(item.index | int),
+          '--chassis-serial-number', '020000%02x0001' | format(item.index | int),
           '--bmc-ip-address', item.bmc_ip,
           '--bmc-ip-allocation', 'fixed',
           '--dpu-policy', 'ignore',

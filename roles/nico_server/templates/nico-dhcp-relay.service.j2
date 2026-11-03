@@ -2,6 +2,7 @@
 [Unit]
 Description=DHCP relay for the NICo lab HostInband segment
 BindsTo=nico-netns@nico-relay.service
+PartOf=nico-netns@nico-relay.service
 After=nico-netns@nico-relay.service
 
 [Service]

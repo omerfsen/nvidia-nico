@@ -34,6 +34,7 @@
     src: nico-netns.sh.j2
     dest: /usr/local/sbin/nico-netns
     mode: "0755"
+  notify: Restart every lab network namespace
 
 - name: Units
   ansible.builtin.template:

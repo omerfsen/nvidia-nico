@@ -2,6 +2,8 @@
 [Unit]
 Description=NICo lab mock BMC for %i
 BindsTo=nico-netns@bmc-%i.service
+# Restart with the namespace, not just stop.
+PartOf=nico-netns@bmc-%i.service
 After=nico-netns@bmc-%i.service libvirtd.service
 
 [Service]
