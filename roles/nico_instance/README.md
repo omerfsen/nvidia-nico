@@ -7,12 +7,20 @@ install), for a zero-DPU site with flat networking:
    (`service-account/current`), an instance type with the servers, an
    allocation reserving them, and a `FLAT` VPC.
 2. **Admin CLI** (in the cluster, see `nico_ingest`): the HostInband segment
-   attached to the VPC, the OS image (URL, plain-hex sha256, boot disk, root
-   label, and the `/boot` and EFI partitions by UUID: Ubuntu noble keeps
-   `/boot` separate, which the REST API cannot express), and one instance per
-   server with cloud-init user data (hostname, SSH key) and phone-home off
-   (its metadata service runs on a DPU).
-3. Waits until each installed OS answers SSH as `ubuntu` with its hostname.
+   attached to the VPC, the OS images (URL, plain-hex sha256, boot disk, root
+   label, and the `/boot` and EFI partitions by UUID: Ubuntu noble and Rocky
+   Linux 10 keep `/boot` separate, which the REST API cannot express), and
+   one instance per server, with the OS it names (`os`), cloud-init user
+   data (hostname, SSH key, the image's extra first-boot commands) and
+   phone-home off (its metadata service runs on a DPU).
+3. Waits until each installed OS answers SSH as the image's user (`ubuntu`,
+   `rocky`) with its hostname.
+
+Images: Ubuntu 24.04 (`ubuntu-24.04-20261017`, the default) and Rocky Linux
+10.2 (`rocky-10.2-20260525`). Rocky's image logs the kernel to the serial
+port only; its first boot adds `console=tty0`, so a server with a GPU shows
+later boots on the GPU's display. NICo's imager handles both: it finds the
+shim on the ESP and, on a RHEL-family image, runs `grub2-mkconfig` (BLS).
 
 NICo then restarts the server, iPXE chains `qcow-imager.efi`, which
 downloads the image, writes it to the disk, seeds cloud-init and reboots

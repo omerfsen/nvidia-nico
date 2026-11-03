@@ -19,6 +19,11 @@ nico_artifacts_files:
   - path: os/ubuntu-24.04-server-cloudimg-amd64-20261017.img
     url: https://cloud-images.ubuntu.com/releases/noble/release-20261017/ubuntu-24.04-server-cloudimg-amd64.img
     sha256: 04e8f2461a16a44e78a370284471f29616cdd9baf1893df25807b71f985b6c94
+  # Rocky Linux 10.2 GenericCloud Base, build 20260525.0
+  # (https://dl.rockylinux.org/pub/rocky/10.2/images/x86_64/CHECKSUM).
+  - path: os/Rocky-10-GenericCloud-Base-10.2-20260525.0.x86_64.qcow2
+    url: https://dl.rockylinux.org/pub/rocky/10.2/images/x86_64/Rocky-10-GenericCloud-Base-10.2-20260525.0.x86_64.qcow2
+    sha256: 9fc9e9ff16888bb68ac39b0392e25c9c92684d50c85f1cce6ab549363bbc4b48
 
 # Derived: the base URL the servers use.
 nico_artifacts_base_url: "http://{{ nico_artifacts_address }}:{{ nico_artifacts_port }}"
