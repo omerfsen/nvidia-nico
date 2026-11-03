@@ -1,6 +1,6 @@
 # Build log
 
-Every step of building the NICo lab on `dragon`, with each failure and its
+Every step of building the NICo lab on the build machine (`buildmachine`), with each failure and its
 fix, in order. Newest at the bottom.
 
 The host: AMD Ryzen 9 9900X (24 threads), 92 GiB RAM, one RTX 4080 SUPER
@@ -45,7 +45,7 @@ v2.3.0 unless named):
   (cert-manager 1.17.1, Vault chart 0.25.0, postgres-operator 1.11.0,
   MetalLB 0.14.5) are not validated on 1.36, which is a known risk. 1.36 is
   also NVKE's minor. Calico 3.32 lists 1.31-1.37 as supported.
-- **Images built from source into a registry on dragon.** No public NICo
+- **Images built from source into a registry on the build machine.** No public NICo
   images exist (CI pushes to a private NGC org, `.github/workflows/ci.yaml:307-308`).
 
 ## Step 2: Repository and CI (2026-11-03)
@@ -150,7 +150,7 @@ VM so far.
 
 NICo publishes no public images, so the lab hosts its own registry: CNCF
 distribution 3.1.2 (`registry:3.1.2`, pinned by digest) in a container run by
-`nico-registry.service` on dragon, host networking, listening only on
+`nico-registry.service` on the build machine, host networking, listening only on
 `192.168.91.1:5000` (the host's address on `nico-site`). TLS comes from a lab
 CA made once with openssl (`/etc/nico-registry/pki`); no authentication,
 since only the lab networks reach it. The unit waits for the bridge address
@@ -243,7 +243,7 @@ does not depend on the LAN's DNS block list.
 
 bmc-mock is not part of `make images`; it has its own Dockerfile
 (`crates/bmc-mock/Dockerfile`, Rust built inside Docker, no emulation). It
-was built on dragon from the v2.3.0 checkout while the build VM compiled the
+was built on the build machine from the v2.3.0 checkout while the build VM compiled the
 rest, and pushed as `192.168.91.1:5000/nico/bmc-mock:v2.3.0` (258 MB).
 
 What bmc-mock generates for the Dell R750 profile, zero DPUs, instance index
@@ -277,7 +277,7 @@ How the pieces sit on `nico-inband` (role `nico_server`):
 - **DHCP relay** for the segment: dnsmasq, relay only, in its own namespace
   `nico-relay` at `192.168.92.2`, forwarding to nico-dhcp's VIP
   `192.168.91.200`. On the host it would never see nico-dhcp's replies:
-  they enter dragon on `virbr-nicosite`, where libvirt's dnsmasq has UDP 67
+  they enter the build machine on `virbr-nicosite`, where libvirt's dnsmasq has UDP 67
   bound to that device (`ss -ulpn` shows `0.0.0.0%virbr-nicosite:67`).
 
 ```shell
@@ -325,7 +325,7 @@ job `JID_4297...` `Scheduled`; Redfish `On` started the VM and the job read
 
 ## Step 10: The NICo control plane (2026-11-03)
 
-Role `nico`, run from dragon against the site cluster (`playbooks/nico.yml`):
+Role `nico`, run from the build machine against the site cluster (`playbooks/nico.yml`):
 pinned helm 3.22.1, helmfile 1.8.2 and helm-diff 3.15.15 in its own tool
 directory, a `python3` with PyYAML first on `setup.sh`'s PATH (brew's 3.15
 has none), the v2.3.0 checkout (commit checked), a small unbound image
@@ -397,7 +397,7 @@ ansible-playbook -i inventory/kvm playbooks/nico.yml
 
 ## Step 11: NICo ingests the first server (2026-11-03)
 
-Role `nico_ingest` (second play of `playbooks/servers.yml`), from dragon:
+Role `nico_ingest` (second play of `playbooks/servers.yml`), from the build machine:
 
 - **Admin pod.** NICo's API certificate names only cluster DNS names
   (`api-lab1.nico.lab`, `nico-api.nico-system.svc.cluster.local`, ...), not
