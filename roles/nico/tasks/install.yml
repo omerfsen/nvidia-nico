@@ -16,6 +16,42 @@
 - name: Install or update
   when: nico_installed_hash.stdout | default('') != nico_inputs_hash.stdout
   block:
+    # NICo's unseal_vault.sh runs `vault operator init` through kubectl exec
+    # and only then saves the keys in Secret vault/vault-cluster-keys. If the
+    # exec output is lost (seen once, right after the Vault pods started),
+    # Vault is initialized but its keys are gone: it can never be unsealed
+    # and every later setup.sh stops at "vault-cluster-keys not found". On an
+    # install that never completed (no fingerprint above) there is nothing in
+    # Vault to keep, so reset it and let setup.sh initialize it again.
+    - name: Vault state (an install that never completed)
+      ansible.builtin.shell: |
+        set -o pipefail
+        init=$(kubectl -n vault exec vault-0 -c vault -- \
+          vault status -tls-skip-verify -format=json 2>/dev/null | jq -r .initialized) || true
+        keys=$(kubectl -n vault get secret vault-cluster-keys -o name 2>/dev/null) || true
+        echo "initialized=${init:-false} keys=${keys:+yes}"
+      args: {executable: /bin/bash}
+      environment: "{{ nico_env }}"
+      register: nico_vault_state
+      changed_when: false
+      when: nico_installed_hash.stdout | default('') | length == 0
+
+    - name: Reset a Vault whose keys were lost
+      ansible.builtin.shell: |
+        set -euo pipefail
+        helm -n vault uninstall vault --wait
+        kubectl -n vault delete pvc --all --wait
+        # local-path-persistent retains volumes: drop the released ones.
+        kubectl get pv -o json \
+          | jq -r '.items[] | select(.spec.claimRef.namespace == "vault" and .status.phase == "Released") | .metadata.name' \
+          | xargs -r kubectl delete pv
+      args: {executable: /bin/bash}
+      environment: "{{ nico_env }}"
+      when:
+        - nico_vault_state is not skipped
+        - "'initialized=true keys=' == nico_vault_state.stdout"
+      changed_when: true
+
     - name: Preflight
       ansible.builtin.shell: |
         set -o pipefail
@@ -29,10 +65,14 @@
       environment: "{{ nico_env }}"
       changed_when: false
 
-    # Its output goes to <nico_work_dir>/logs/setup.log.
+    # Its output goes to <nico_work_dir>/logs/setup.log, the previous run's
+    # to setup.log.1.
     - name: Run setup.sh
       ansible.builtin.shell: |
         set -o pipefail
+        if [ -f {{ nico_work }}/logs/setup.log ]; then
+          mv {{ nico_work }}/logs/setup.log {{ nico_work }}/logs/setup.log.1
+        fi
         ./setup.sh -y --skip-dpf --skip-rms \
           --core-values {{ nico_work }}/lab/core-values.yaml \
           --metallb-config {{ nico_work }}/lab/metallb-config.yaml \

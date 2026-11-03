@@ -57,6 +57,10 @@ git submodule update --init --recursive
 direnv allow .
 endstep
 
+step "Runner"
+echo "CPUs: $(nproc)"; free -h; df -h /
+endstep
+
 step "Local registry for the build"
 docker run -d --rm --name nico-build-registry -p 5000:5000 \
   docker.io/library/registry:3.1.2@sha256:d4032d4cc323c1731c707931ecada07a53076eac38e3b61ae57533f170f2c6c3 >/dev/null
@@ -65,6 +69,17 @@ endstep
 
 step "make images (Core + REST, amd64)"
 direnv exec . make images IMAGE_REGISTRY=$L IMAGE_TAG="$UPSTREAM_TAG" NICO_ARCHES=amd64
+endstep
+
+# The Rust builds leave tens of GB in Docker's build cache (cargo targets,
+# sccache); the images are already in the local registry. Without this the
+# boot-artifacts build (mkosi) ran out of disk on a hosted runner.
+step "Free the build cache"
+df -h /
+docker builder prune -af >/dev/null
+docker image prune -af >/dev/null
+docker system df
+df -h /
 endstep
 
 step "make images-boot-artifacts (amd64)"

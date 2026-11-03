@@ -70,6 +70,11 @@ argument_specs:
         type: str
         default: ~/.ssh/nico/instance_ed25519
         description: Ssh key.
+      nico_instance_rest_ready_timeout:
+        type: int
+        default: 600
+        description: Seconds to wait until NICo's REST API sees each server Ready (it syncs from the site
+          and can lag the admin CLI right after ingestion).
       nico_instance_ssh_timeout:
         type: int
         default: 1800

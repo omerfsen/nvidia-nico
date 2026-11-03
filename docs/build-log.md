@@ -655,3 +655,42 @@ inventory and commands. Tested exactly as written there, on `nico-rocky-02`
 as a single control plane: `omerfsen.stratum` 0.1.0 from Galaxy, Stratum
 v1.37.1-stratum.0, node `Ready` (Kubernetes 1.37.1, containerd 2.4.2, SELinux
 enforcing), 11 system pods running, rerun `changed=0`.
+
+## Step 17: From scratch again, and a race in provisioning (2026-11-03)
+
+A from-scratch rebuild of `main` (with Rocky support and the fixes of step
+15) went through networks, registry, artifacts, site cluster, images, NICo
+and ingestion with no intervention, then failed at "Add the servers to the
+instance type" (output hidden by `no_log`). A rerun a minute later passed
+that task and provisioned both servers.
+
+**Cause:** NICo's REST API keeps its own copy of the machines, synced from the
+site, and rejects adding a machine it does not know yet (404) or that is not
+`Ready` in that copy (400, `machineinstancetype.go`). `servers.yml` waits for
+Ready through the admin CLI, which sees it first; right after ingestion REST
+can still lag. **Fix:** "Machines as REST sees them" waits (up to
+`nico_instance_rest_ready_timeout`, 600 s) until every server is in the
+instance type already or `Ready` in REST.
+
+**Failure 2 (the from-scratch test of that fix):** NICo's `setup.sh` stopped
+at "[4/6] vault init + unseal", and every rerun after it with
+`secrets "vault-cluster-keys" not found`. `unseal_vault.sh` runs
+`vault operator init` through `kubectl exec` and writes its output to
+`/tmp/cluster-keys.json`, then saves it as that Secret. The file was there,
+empty, while Vault reported `initialized: true`: the init went through but
+its output (the unseal keys and root token) never arrived, seconds after the
+Vault pods started. Those keys are gone, so that Vault can never be unsealed.
+Seen once in about five installs. **Fix:** on an install that never completed
+(no `nico-lab-install` fingerprint), if Vault is initialized and the Secret is
+missing, the role uninstalls Vault and deletes its volumes before `setup.sh`,
+which then initializes it again. The previous `setup.log` is kept as
+`setup.log.1`, since a rerun overwrote the log of the run that failed.
+
+**The image pipeline (`upstream-images`), first run on a hosted runner:** all
+deployable images built (NICo's core release build alone took 74 minutes),
+then the boot-artifacts build (mkosi: scout, the imager) stopped with
+`No space left on device` after 2.5 hours, so nothing was pushed. The runner
+had 107 GB free after its cleanup step; the Rust builds left most of it in
+Docker's build cache. **Fix:** `tools/build-nico-images.sh` prunes the build
+cache once those images are in its local registry, and prints the runner's
+CPUs, memory and disk.
