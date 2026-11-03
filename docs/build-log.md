@@ -671,3 +671,17 @@ Ready through the admin CLI, which sees it first; right after ingestion REST
 can still lag. **Fix:** "Machines as REST sees them" waits (up to
 `nico_instance_rest_ready_timeout`, 600 s) until every server is in the
 instance type already or `Ready` in REST.
+
+**Failure 2 (the from-scratch test of that fix):** NICo's `setup.sh` stopped
+at "[4/6] vault init + unseal", and every rerun after it with
+`secrets "vault-cluster-keys" not found`. `unseal_vault.sh` runs
+`vault operator init` through `kubectl exec` and writes its output to
+`/tmp/cluster-keys.json`, then saves it as that Secret. The file was there,
+empty, while Vault reported `initialized: true`: the init went through but
+its output (the unseal keys and root token) never arrived, seconds after the
+Vault pods started. Those keys are gone, so that Vault can never be unsealed.
+Seen once in about five installs. **Fix:** on an install that never completed
+(no `nico-lab-install` fingerprint), if Vault is initialized and the Secret is
+missing, the role uninstalls Vault and deletes its volumes before `setup.sh`,
+which then initializes it again. The previous `setup.log` is kept as
+`setup.log.1`, since a rerun overwrote the log of the run that failed.
