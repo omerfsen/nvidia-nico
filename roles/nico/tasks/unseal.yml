@@ -1,0 +1,19 @@
+---
+# Vault has no auto-unseal here: after a Vault pod restarts (a node reboot)
+# it is sealed. The Vault chart labels each pod vault-sealed=true|false;
+# NICo's unseal_vault.sh skips pods that are already unsealed.
+
+- name: Sealed Vault pods
+  ansible.builtin.command: >-
+    kubectl get pods -n vault -l app.kubernetes.io/name=vault,vault-sealed=true -o name
+  environment: "{{ nico_env }}"
+  register: nico_vault_sealed
+  changed_when: false
+
+- name: Unseal Vault
+  ansible.builtin.command: ./unseal_vault.sh
+  args:
+    chdir: "{{ nico_src_dir }}/helm-prereqs"
+  environment: "{{ nico_env }}"
+  when: nico_vault_sealed.stdout | length > 0
+  changed_when: true

@@ -1,0 +1,151 @@
+# {{ ansible_managed }}
+# NICo Core values for the lab (setup.sh --core-values), from NICo
+# {{ nico_version }}'s helm-prereqs/values/nico-core.yaml.
+global:
+  image:
+    repository: ""
+    tag: ""
+    pullPolicy: IfNotPresent
+  # Anonymous lab registry: no pull secret.
+  imagePullSecrets: []
+  certificate:
+    duration: 720h0m0s
+    renewBefore: 360h0m0s
+    privateKey:
+      algorithm: ECDSA
+      size: 384
+    issuerRef:
+      kind: ClusterIssuer
+      name: vault-nico-issuer
+      group: cert-manager.io
+  spiffe:
+    trustDomain: nico.local
+
+nico-api:
+  hostname: "{{ nico_api_hostname }}"
+  auth:
+    additionalIssuerCns:
+      - "site-root"
+  # No rack management in the lab.
+  componentManager:
+    enabled: false
+  rms:
+    enabled: false
+  credentials:
+    file:
+      existingSecret:
+        name: nico-site-credentials
+        key: credentials.yaml
+  externalService:
+    enabled: true
+    annotations:
+      metallb.universe.tf/loadBalancerIPs: "{{ nico_vips.api }}"
+  certificate:
+    extraDnsNames:
+      - "{{ nico_api_hostname }}"
+      - "carbide-api.forge"
+      - "nico-api.forge"
+      - "carbide-api.forge-system.svc.cluster.local"
+  siteConfig:
+    enabled: true
+    nicoApiSiteConfig: |
+      {{ lookup('ansible.builtin.template', 'site-config.toml.j2') | indent(6) }}
+
+nico-dhcp:
+  dhcp:
+    v6Enabled: false
+  v6ExternalService:
+    enabled: false
+  externalService:
+    enabled: true
+    annotations:
+      metallb.universe.tf/loadBalancerIPs: "{{ nico_vips.dhcp }}"
+  config:
+    kea:
+      hookParameters:
+        nameservers: "{{ nico_vips.unbound }}"
+        ntpServer: "{{ nico_vips.ntp | join(',') }}"
+        provisioningServer: "{{ nico_vips.pxe }}"
+
+nico-dns:
+  externalService:
+    enabled: true
+    perPodAnnotations:
+{% for vip in nico_vips.dns %}
+      - metallb.universe.tf/loadBalancerIPs: "{{ vip }}"
+{% endfor %}
+
+nico-pxe:
+  externalService:
+    enabled: true
+    annotations:
+      metallb.universe.tf/loadBalancerIPs: "{{ nico_vips.pxe }}"
+  bootArtifactContainers:
+    - name: boot-artifacts-x86-64
+      image: "{{ nico_image_registry }}/boot-artifacts-x86_64:{{ nico_image_tag }}"
+      command: ["sh", "-c", "cp -r /x86_64 /boot-artifacts/blobs/internal"]
+  certificate:
+    extraDnsNames:
+      - "carbide-pxe.forge"
+      - "nico-pxe.forge"
+      - "carbide-static-pxe.forge"
+      - "carbide-pxe.forge-system.svc.cluster.local"
+
+nico-ssh-console-rs:
+  externalService:
+    enabled: true
+    annotations:
+      metallb.universe.tf/loadBalancerIPs: "{{ nico_vips.ssh_console }}"
+
+nico-ntp:
+  externalService:
+    enabled: true
+    perPodAnnotations:
+{% for vip in nico_vips.ntp %}
+      - metallb.universe.tf/loadBalancerIPs: "{{ vip }}"
+{% endfor %}
+
+nico-dsx-exchange-consumer:
+  enabled: false
+
+unbound:
+  enabled: true
+  # The lab's own Alpine + unbound image (omerfsen.nico.nico role).
+  image:
+    repository: "{{ nico_unbound_image }}"
+    tag: "{{ nico_unbound_tag }}"
+  # The exporter needs unbound remote-control keys the stock image lacks.
+  exporter:
+    enabled: false
+  exporterImage:
+    repository: "{{ nico_unbound_image }}"
+    tag: "{{ nico_unbound_tag }}"
+  command: ["/bin/sh", "-c"]
+  args:
+    - |
+      printf 'server:\n  interface: 0.0.0.0\n  interface: ::0\n  username: ""\n  chroot: ""\n  directory: "/etc/unbound"\n  pidfile: ""\ninclude: "/etc/unbound/local.conf.d/*.conf"\n' > /tmp/unbound.conf
+      exec unbound -d -c /tmp/unbound.conf
+  externalService:
+    enabled: true
+    annotations:
+      metallb.universe.tf/loadBalancerIPs: "{{ nico_vips.unbound }}"
+  localConfig:
+    forwarders.conf: |
+      forward-zone:
+          name: "."
+          forward-addr: {{ nico_upstream_dns }}
+  localData:
+{% for name in ['carbide-api.forge', 'nico-api.forge', nico_api_hostname] %}
+    - name: {{ name }}
+      addresses: ["{{ nico_vips.api }}"]
+{% endfor %}
+{% for name in ['carbide-pxe.forge', 'nico-pxe.forge', 'carbide-static-pxe.forge'] %}
+    - name: {{ name }}
+      addresses: ["{{ nico_vips.pxe }}"]
+{% endfor %}
+{% for name in ['carbide-ntp.forge', 'nico-ntp.forge'] %}
+    - name: {{ name }}
+      addresses: {{ nico_vips.ntp | to_json }}
+{% endfor %}
+    - name: unbound.forge
+      addresses: ["{{ nico_vips.unbound }}"]

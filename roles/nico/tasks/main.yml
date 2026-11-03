@@ -1,0 +1,54 @@
+---
+# Runs on the controller (the host with the site cluster's kubeconfig):
+# pinned tools, the NICo checkout, the lab's unbound image, the rendered
+# values, then helm-prereqs/setup.sh when any input changed, Vault unsealed,
+# and a check that the control plane is up.
+
+- name: The site cluster's kubeconfig is here
+  ansible.builtin.stat:
+    path: "{{ nico_kubeconfig | expanduser }}"
+  register: nico_kubeconfig_stat
+  failed_when: not nico_kubeconfig_stat.stat.exists
+
+- name: Work directories
+  ansible.builtin.file:
+    path: "{{ nico_work_dir | expanduser }}/{{ item }}"
+    state: directory
+    mode: "0755"
+  loop: [bin, downloads, helm/plugins, helm/config, helm/cache, helm/data, lab, logs]
+
+- name: Paths and environment for setup.sh
+  ansible.builtin.set_fact:
+    nico_work: "{{ nico_work_dir | expanduser }}"
+    nico_src_dir: "{{ nico_src | expanduser }}"
+    nico_env:
+      PATH: "{{ nico_tools_dir | expanduser }}:{{ ansible_env.PATH }}"
+      KUBECONFIG: "{{ nico_kubeconfig | expanduser }}"
+      HELM_PLUGINS: "{{ nico_work_dir | expanduser }}/helm/plugins"
+      HELM_CONFIG_HOME: "{{ nico_work_dir | expanduser }}/helm/config"
+      HELM_CACHE_HOME: "{{ nico_work_dir | expanduser }}/helm/cache"
+      HELM_DATA_HOME: "{{ nico_work_dir | expanduser }}/helm/data"
+      NICO_IMAGE_REGISTRY: "{{ nico_image_registry }}"
+      NICO_CORE_IMAGE_TAG: "{{ nico_image_tag }}"
+      NICO_REST_IMAGE_TAG: "{{ nico_image_tag }}"
+
+- name: Pinned tools
+  ansible.builtin.import_tasks: tools.yml
+
+- name: NICo source
+  ansible.builtin.import_tasks: source.yml
+
+- name: The lab's unbound image
+  ansible.builtin.import_tasks: unbound.yml
+
+- name: Rendered values
+  ansible.builtin.import_tasks: render.yml
+
+- name: Install when an input changed
+  ansible.builtin.import_tasks: install.yml
+
+- name: Vault unsealed
+  ansible.builtin.import_tasks: unseal.yml
+
+- name: Control plane is up
+  ansible.builtin.import_tasks: verify.yml

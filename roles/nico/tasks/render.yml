@@ -1,0 +1,69 @@
+---
+# The lab's values. setup.sh takes the Core values and the MetalLB config as
+# files; helm-prereqs/values.yaml and the External Secrets values have no
+# override flag, so those two are rewritten in the checkout from the
+# release's own copy (git show) merged with the lab's settings.
+
+- name: Core values
+  ansible.builtin.template:
+    src: core-values.yaml.j2
+    dest: "{{ nico_work }}/lab/core-values.yaml"
+    mode: "0644"
+
+- name: MetalLB config
+  ansible.builtin.template:
+    src: metallb-config.yaml.j2
+    dest: "{{ nico_work }}/lab/metallb-config.yaml"
+    mode: "0644"
+
+- name: The release's own values files
+  ansible.builtin.command: git -C {{ nico_src_dir }} show HEAD:helm-prereqs/{{ item }}  # noqa: command-instead-of-module
+  register: nico_upstream_values
+  changed_when: false
+  loop:
+    - values.yaml
+    - operators/values/external-secrets.yaml
+
+- name: Site values (helm-prereqs/values.yaml)
+  ansible.builtin.copy:
+    dest: "{{ nico_src_dir }}/helm-prereqs/values.yaml"
+    content: |
+      # Rewritten by omerfsen.nico from NICo {{ nico_version }}'s values.yaml.
+      {{ nico_upstream_values.results[0].stdout | from_yaml | combine(nico_site_values, recursive=true) | to_nice_yaml(indent=2, width=1000) }}
+    mode: "0644"
+  vars:
+    nico_site_values:
+      siteName: "{{ nico_site_name }}"
+      # BMC root and UEFI defaults site-explorer needs; empty passwords are
+      # generated on the first install and kept.
+      siteCredentials: {enabled: true}
+      # No rack management (pairs with --skip-rms).
+      rms: {enabled: false}
+      postgresql:
+        resources: "{{ nico_postgres_resources }}"
+
+- name: External Secrets values
+  ansible.builtin.copy:
+    dest: "{{ nico_src_dir }}/helm-prereqs/operators/values/external-secrets.yaml"
+    content: |
+      # Rewritten by omerfsen.nico: images from ghcr.io (see nico_eso_image_repository).
+      {{ nico_upstream_values.results[1].stdout | from_yaml | combine(nico_eso_values, recursive=true) | to_nice_yaml(indent=2, width=1000) }}
+    mode: "0644"
+  vars:
+    nico_eso_values:
+      image: {repository: "{{ nico_eso_image_repository }}"}
+      webhook: {image: {repository: "{{ nico_eso_image_repository }}"}}
+      certController: {image: {repository: "{{ nico_eso_image_repository }}"}}
+
+- name: Fingerprint of every install input
+  ansible.builtin.shell: |
+    set -euo pipefail
+    {
+      echo {{ nico_version }} {{ nico_commit }} {{ nico_image_registry }} {{ nico_image_tag }}
+      cat {{ nico_work }}/lab/core-values.yaml {{ nico_work }}/lab/metallb-config.yaml \
+          {{ nico_src_dir }}/helm-prereqs/values.yaml \
+          {{ nico_src_dir }}/helm-prereqs/operators/values/external-secrets.yaml
+    } | sha256sum | cut -d' ' -f1
+  args: {executable: /bin/bash}
+  register: nico_inputs_hash
+  changed_when: false

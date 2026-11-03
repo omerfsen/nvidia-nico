@@ -1,0 +1,80 @@
+---
+# helm, helmfile and the helm-diff plugin, pinned and checksum verified, in
+# nico_tools_dir; plus `python3` there pointing at a Python with PyYAML.
+# setup.sh runs with nico_tools_dir first on PATH and its own HELM_* dirs.
+
+- name: Download helm, helmfile and helm-diff (checksums verified)
+  ansible.builtin.get_url:
+    url: "{{ item.url }}"
+    dest: "{{ nico_work }}/downloads/{{ item.url | basename }}"
+    checksum: "sha256:{{ item.sha256 }}"
+    mode: "0644"
+    timeout: 120
+  loop:
+    - url: "https://get.helm.sh/helm-v{{ nico_helm_version }}-linux-amd64.tar.gz"
+      sha256: "{{ nico_helm_sha256 }}"
+    - url: "https://github.com/helmfile/helmfile/releases/download/v{{ nico_helmfile_version }}/helmfile_{{ nico_helmfile_version }}_linux_amd64.tar.gz"
+      sha256: "{{ nico_helmfile_sha256 }}"
+    - url: "https://github.com/databus23/helm-diff/releases/download/v{{ nico_helm_diff_version }}/diff-{{ nico_helm_diff_version }}-linux-amd64.tgz"
+      sha256: "{{ nico_helm_diff_sha256 }}"
+  loop_control: {label: "{{ item.url | basename }}"}
+
+- name: A directory per tool version
+  ansible.builtin.file:
+    path: "{{ nico_work }}/downloads/{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "helm-{{ nico_helm_version }}"
+    - "helmfile-{{ nico_helmfile_version }}"
+    - "helm-diff-{{ nico_helm_diff_version }}"
+
+- name: Unpack them
+  ansible.builtin.unarchive:
+    src: "{{ nico_work }}/downloads/{{ item.file }}"
+    dest: "{{ nico_work }}/downloads/{{ item.dir }}"
+    remote_src: true
+    creates: "{{ nico_work }}/downloads/{{ item.dir }}/{{ item.creates }}"
+  loop:
+    - {file: "helm-v{{ nico_helm_version }}-linux-amd64.tar.gz", dir: "helm-{{ nico_helm_version }}", creates: linux-amd64/helm}
+    - {file: "helmfile_{{ nico_helmfile_version }}_linux_amd64.tar.gz", dir: "helmfile-{{ nico_helmfile_version }}", creates: helmfile}
+    - {file: "diff-{{ nico_helm_diff_version }}-linux-amd64.tgz", dir: "helm-diff-{{ nico_helm_diff_version }}", creates: diff/plugin.yaml}
+  loop_control: {label: "{{ item.dir }}"}
+
+- name: Tools on setup.sh's PATH
+  ansible.builtin.file:
+    src: "{{ item.src }}"
+    dest: "{{ nico_tools_dir | expanduser }}/{{ item.name }}"
+    state: link
+  loop:
+    - {name: helm, src: "{{ nico_work }}/downloads/helm-{{ nico_helm_version }}/linux-amd64/helm"}
+    - {name: helmfile, src: "{{ nico_work }}/downloads/helmfile-{{ nico_helmfile_version }}/helmfile"}
+    - {name: python3, src: "{{ nico_python }}"}
+  loop_control: {label: "{{ item.name }}"}
+
+- name: The helm-diff plugin
+  ansible.builtin.file:
+    src: "{{ nico_work }}/downloads/helm-diff-{{ nico_helm_diff_version }}/diff"
+    dest: "{{ nico_work }}/helm/plugins/diff"
+    state: link
+
+- name: Python with PyYAML
+  ansible.builtin.command: "{{ nico_tools_dir | expanduser }}/python3 -c 'import yaml'"
+  changed_when: false
+
+- name: Tool versions
+  ansible.builtin.shell: |
+    set -euo pipefail
+    helm version --short
+    helmfile --version
+    helm plugin list | awk '$1 == "diff" {print "helm-diff", $2}'
+    for t in kubectl jq curl openssl ssh-keygen envsubst; do command -v "$t" >/dev/null || { echo "missing $t" >&2; exit 1; }; done
+  args: {executable: /bin/bash}
+  environment: "{{ nico_env }}"
+  register: nico_tool_versions
+  changed_when: false
+  failed_when: >-
+    nico_tool_versions.rc != 0
+    or ('v' ~ nico_helm_version) not in nico_tool_versions.stdout
+    or nico_helmfile_version not in nico_tool_versions.stdout
+    or ('helm-diff ' ~ nico_helm_diff_version) not in nico_tool_versions.stdout

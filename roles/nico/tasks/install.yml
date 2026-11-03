@@ -1,0 +1,57 @@
+---
+# setup.sh converges but always changes something (new Helm revisions,
+# recreated Secrets, a site-agent restart), so it runs only when the inputs'
+# fingerprint differs from the one recorded after the last successful run
+# (ConfigMap default/nico-lab-install). Preflight runs first, without -y, so
+# its errors stop the install.
+
+- name: Fingerprint of the last install
+  ansible.builtin.command: >-
+    kubectl get configmap nico-lab-install -n default -o jsonpath={.data.inputs}
+  environment: "{{ nico_env }}"
+  register: nico_installed_hash
+  changed_when: false
+  failed_when: false
+
+- name: Install or update
+  when: nico_installed_hash.stdout | default('') != nico_inputs_hash.stdout
+  block:
+    - name: Preflight
+      ansible.builtin.shell: |
+        set -o pipefail
+        ./preflight.sh --skip-dpf --skip-rms \
+          --core-values {{ nico_work }}/lab/core-values.yaml \
+          --metallb-config {{ nico_work }}/lab/metallb-config.yaml \
+          < /dev/null 2>&1 | tee {{ nico_work }}/logs/preflight.log
+      args:
+        chdir: "{{ nico_src_dir }}/helm-prereqs"
+        executable: /bin/bash
+      environment: "{{ nico_env }}"
+      changed_when: false
+
+    # Its output goes to <nico_work_dir>/logs/setup.log.
+    - name: Run setup.sh
+      ansible.builtin.shell: |
+        set -o pipefail
+        ./setup.sh -y --skip-dpf --skip-rms \
+          --core-values {{ nico_work }}/lab/core-values.yaml \
+          --metallb-config {{ nico_work }}/lab/metallb-config.yaml \
+          < /dev/null > {{ nico_work }}/logs/setup.log 2>&1
+      args:
+        chdir: "{{ nico_src_dir }}/helm-prereqs"
+        executable: /bin/bash
+      environment: "{{ nico_env }}"
+      async: "{{ nico_setup_timeout }}"
+      poll: 30
+      changed_when: true
+
+    - name: Record this install's fingerprint
+      ansible.builtin.shell: |
+        set -euo pipefail
+        kubectl create configmap nico-lab-install -n default \
+          --from-literal=inputs={{ nico_inputs_hash.stdout }} \
+          --from-literal=version={{ nico_version }} \
+          --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+      args: {executable: /bin/bash}
+      environment: "{{ nico_env }}"
+      changed_when: true
