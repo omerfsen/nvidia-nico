@@ -25,21 +25,33 @@ nico_instance_segment_name: lab-inband
 # Name stamped on admin-CLI writes the REST side does not know about.
 nico_instance_operator: nico-lab
 
-# The OS NICo writes to each server's disk (served by
-# omerfsen.nico.nico_artifacts). digest: plain hex sha256 (the imager picks
-# the algorithm from the length; a "sha256:" prefix breaks it). Ubuntu noble
-# keeps /boot on a partition of its own, which the imager needs by UUID.
-nico_instance_os:
-  name: ubuntu-24.04-20261017
-  url: http://192.168.91.1:8090/os/ubuntu-24.04-server-cloudimg-amd64-20261017.img
-  digest: 04e8f2461a16a44e78a370284471f29616cdd9baf1893df25807b71f985b6c94
-  boot_disk: /dev/vda
-  rootfs_label: cloudimg-rootfs
-  bootfs_id: b4f0deba-ce7d-45dc-9999-0427f2720320
-  efifs_id: 0E9D-3FD8
+# The OS images NICo can write to a server's disk (served by
+# omerfsen.nico.nico_artifacts); each instance picks one by name (os), the
+# first is the default. digest: plain hex sha256 (the imager picks the
+# algorithm from the length; a "sha256:" prefix breaks it). Both images keep
+# /boot on a partition of its own, which the imager needs by UUID. user: the
+# image's cloud-init default user, who gets the SSH key.
+nico_instance_os_images:
+  - name: ubuntu-24.04-20261017
+    url: http://192.168.91.1:8090/os/ubuntu-24.04-server-cloudimg-amd64-20261017.img
+    digest: 04e8f2461a16a44e78a370284471f29616cdd9baf1893df25807b71f985b6c94
+    boot_disk: /dev/vda
+    rootfs_label: cloudimg-rootfs
+    bootfs_id: b4f0deba-ce7d-45dc-9999-0427f2720320
+    efifs_id: 0E9D-3FD8
+    user: ubuntu
+  - name: rocky-10.2-20260525
+    url: http://192.168.91.1:8090/os/Rocky-10-GenericCloud-Base-10.2-20260525.0.x86_64.qcow2
+    digest: 9fc9e9ff16888bb68ac39b0392e25c9c92684d50c85f1cce6ab549363bbc4b48
+    boot_disk: /dev/vda
+    rootfs_label: rocky
+    bootfs_id: ac0faa30-b59a-4f1b-a77b-90cc245d6507
+    efifs_id: D779-42D2
+    user: rocky
 
-# Servers to provision, by their NICo machine name, and the hostname each
-# installed OS gets. Login user ubuntu with the key below.
+# Servers to provision: server (NICo machine name), hostname the installed
+# OS gets, os (an image name above; default the first). Login with the key
+# below as the image's user.
 nico_instance_instances: []
 nico_instance_ssh_key: ~/.ssh/nico/instance_ed25519
 

@@ -206,34 +206,35 @@
   register: nico_instance_images
   changed_when: false
 
-- name: The OS image's ID, if it exists
+# Registered under a stable ID (from the name) when missing.
+- name: Register the OS images that are missing
+  ansible.builtin.command:
+    argv: "{{ (nico_instance_cli | split) + ['os-image', 'create', '--id', item.name | to_uuid,
+           '--name', item.name, '--tenant-org-id', nico_instance_org,
+           '--url', item.url, '--digest', item.digest,
+           '--boot-disk', item.boot_disk, '--rootfs-label', item.rootfs_label,
+           '--bootfs-id', item.bootfs_id, '--efifs-id', item.efifs_id] }}"
+  environment: "{{ nico_instance_env }}"
+  loop: "{{ nico_instance_os_images }}"
+  loop_control: {label: "{{ item.name }}"}
+  when: item.name not in (nico_instance_images.stdout | from_json | map(attribute='attributes') | map(attribute='name'))
+  changed_when: true
+
+- name: Image IDs by name, and each instance's image
   ansible.builtin.set_fact:
-    nico_instance_image_id: >-
-      {{ (nico_instance_images.stdout | from_json | map(attribute='attributes')
-          | selectattr('name', 'eq', nico_instance_os.name) | map(attribute='id.value') | first) | default('') }}
-
-# A separate flag: a block's when is evaluated again for every task in it,
-# and the first task below sets nico_instance_image_id.
-- name: Is the OS image missing?
-  ansible.builtin.set_fact:
-    nico_instance_image_missing: "{{ nico_instance_image_id | length == 0 }}"
-
-- name: Register the OS image
-  when: nico_instance_image_missing | bool
-  block:
-    - name: A new image ID
-      ansible.builtin.set_fact:
-        nico_instance_image_id: "{{ nico_instance_os.name | to_uuid }}"
-
-    - name: Create it
-      ansible.builtin.command:
-        argv: "{{ (nico_instance_cli | split) + ['os-image', 'create', '--id', nico_instance_image_id,
-               '--name', nico_instance_os.name, '--tenant-org-id', nico_instance_org,
-               '--url', nico_instance_os.url, '--digest', nico_instance_os.digest,
-               '--boot-disk', nico_instance_os.boot_disk, '--rootfs-label', nico_instance_os.rootfs_label,
-               '--bootfs-id', nico_instance_os.bootfs_id, '--efifs-id', nico_instance_os.efifs_id] }}"
-      environment: "{{ nico_instance_env }}"
-      changed_when: true
+    nico_instance_image_ids: >-
+      {{ dict(nico_instance_os_images | map(attribute='name')
+              | zip(nico_instance_os_images | map(attribute='name') | map('to_uuid')))
+         | combine(dict(nico_instance_images.stdout | from_json | map(attribute='attributes') | map(attribute='name')
+              | zip(nico_instance_images.stdout | from_json | map(attribute='attributes') | map(attribute='id.value')))) }}
+    nico_instance_targets: >-
+      {%- set out = [] -%}
+      {%- for t in nico_instance_targets -%}
+      {%- set img = nico_instance_os_images | selectattr('name', 'eq', t.os | default(nico_instance_os_images[0].name)) | list -%}
+      {%- if img | length == 0 -%}{{ 0 / 0 }}{%- endif -%}
+      {%- set _ = out.append(t | combine({'image': img[0]})) -%}
+      {%- endfor -%}
+      {{ out }}
 
 - name: SSH key for the instances
   ansible.builtin.command: ssh-keygen -q -t ed25519 -N '' -C nico-instance -f {{ nico_instance_ssh_key | expanduser }}
@@ -261,18 +262,21 @@
            '--prefix-name', item.hostname, '--flat-vpc-id', nico_instance_vpc_id,
            '--machine-id', item.machine_id, '--os', nico_instance_os_config | to_json] }}"
   vars:
+    # prefer_fqdn_over_hostname: RHEL-family cloud-init otherwise names the
+    # host after NICo's DNS name for its address, not the hostname here.
+    nico_instance_cloud_config:
+      hostname: "{{ item.hostname }}"
+      prefer_fqdn_over_hostname: false
+      ssh_authorized_keys:
+        - "{{ nico_instance_pubkey.content | b64decode | trim }}"
     nico_instance_os_config:
-      variant: {OsImageId: {value: "{{ nico_instance_image_id }}"}}
+      variant: {OsImageId: {value: "{{ nico_instance_image_ids[item.image.name] }}"}}
       phone_home_enabled: false
       run_provisioning_instructions_on_every_boot: false
-      user_data: |
-        #cloud-config
-        hostname: {{ item.hostname }}
-        ssh_authorized_keys:
-          - {{ nico_instance_pubkey.content | b64decode | trim }}
+      user_data: "#cloud-config\n{{ nico_instance_cloud_config | to_nice_yaml(indent=2) }}"
   environment: "{{ nico_instance_env }}"
   loop: "{{ nico_instance_targets }}"
-  loop_control: {label: "{{ item.server }} -> {{ item.hostname }}"}
+  loop_control: {label: "{{ item.server }} -> {{ item.hostname }} ({{ item.image.name }})"}
   when: >-
     item.machine_id not in ((nico_instance_existing.stdout | from_json).instances | default([]) | map(attribute='machine_id') | list)
   changed_when: true
@@ -281,7 +285,7 @@
 - name: Each provisioned host answers SSH with its hostname
   ansible.builtin.command: >-
     ssh -i {{ nico_instance_ssh_key | expanduser }} -o BatchMode=yes -o ConnectTimeout=5
-    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ubuntu@{{ nico_instance_address }} hostname
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{ item.image.user }}@{{ nico_instance_address }} hostname
   vars:
     nico_instance_machine: >-
       {{ (nico_instance_machines.stdout | from_json).machines | selectattr('id', 'eq', item.machine_id) | first }}

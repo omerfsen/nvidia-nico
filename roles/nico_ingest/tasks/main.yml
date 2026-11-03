@@ -106,11 +106,15 @@
   no_log: false
 
 # ── Ready ────────────────────────────────────────────────────────────────
+# A server with an instance on it reports Assigned/<instance state>; it was
+# ingested, so it counts as Ready (or a rerun after provisioning waits
+# forever).
 - name: Every server is Ready in NICo
   ansible.builtin.shell: |
     set -o pipefail
     {{ nico_ingest_cli }} -f json machine show 2>/dev/null | grep -v IGNORING \
-      | jq -r '[.machines[] | select(.state == "Ready") | .metadata.name // empty] | join(" ")'
+      | jq -r '[.machines[] | select(.state == "Ready" or (.state | startswith("Assigned/")))
+               | .metadata.name // empty] | join(" ")'
   args: {executable: /bin/bash}
   environment: "{{ nico_ingest_env }}"
   register: nico_ingest_ready
