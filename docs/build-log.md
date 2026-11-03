@@ -620,3 +620,38 @@ SSH as `rocky` answers with hostname `nico-rocky-02`, Rocky Linux 10.2
 (kernel 6.12.0-211.16.1.el10_2), root grown to 119G, the RTX 4080 (both PCI
 functions) present, and the boot on the GPU's display. Then a full
 `kvm.yml` rerun against the provisioned lab: `changed=0` on every host.
+
+## Step 16: Kubernetes on the servers (2026-11-03)
+
+Goal: a Kubernetes cluster on the servers NICo manages.
+
+**Cluster API (CAPNICo), the intended route, cannot work on this site.**
+CAPNICo ([dsx-ai-factory/cluster-api-provider-nico](https://github.com/dsx-ai-factory/cluster-api-provider-nico))
+creates machines through NICo's REST API, and every path and request field
+it uses exists in v2.3.0. The networking does not fit:
+
+- A zero-DPU site has only FLAT VPCs. NICo v2.3.0 creates an instance in one
+  only with `autoNetwork: true` and an empty interface list
+  (`rest-api/api/pkg/api/model/instance.go`, the `Interfaces` validation;
+  `docs/manuals/vpc/flat_vpcs_zero_dpu.md`); subnet interfaces need an
+  ETHERNET_VIRTUALIZER VPC and VPC-prefix interfaces an FNN VPC.
+- CAPNICo's `NicoMachine.spec.interfaces` is `MinItems=1` (subnet or VPC
+  prefix) and it has no `autoNetwork` field, in v0.1.0 (2026-10-27) and on
+  `main` (2026-11-03); no issue or PR upstream covers FLAT VPCs.
+- NVKE (v0.22.0) bundles CAPNICo v0.0.45 and refuses a node pool without
+  subnets or VPC prefixes too.
+
+So it is not a NICo version problem: it waits for FLAT VPC support in
+CAPNICo (and NVKE). Smaller things that would follow: CAPNICo's
+`operatingSystemId` points at a REST OS image, and REST has no field for a
+separate `/boot` (an `ipxeScript` chaining NICo's imager with `bootfs_uuid=`
+and `efifs_uuid=` gets around it); NVKE's installer takes only a static NICo
+token, which expires after 30 minutes in this lab.
+
+**Instead: CIQ Stratum on Rocky Linux.** NICo installs Rocky Linux 10.2, and
+[omerfsen.stratum](https://github.com/omerfsen/stratum) installs Kubernetes on
+RHEL-family hosts over SSH. Kept out of this collection: the README shows the
+inventory and commands. Tested exactly as written there, on `nico-rocky-02`
+as a single control plane: `omerfsen.stratum` 0.1.0 from Galaxy, Stratum
+v1.37.1-stratum.0, node `Ready` (Kubernetes 1.37.1, containerd 2.4.2, SELinux
+enforcing), 11 system pods running, rerun `changed=0`.
