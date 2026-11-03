@@ -7,15 +7,20 @@ set -euo pipefail
 name=$1 action=${2:-up}
 # shellcheck disable=SC1090
 source "/etc/nico/netns/$name.env"
-host_if="nn-$name"; host_if=${host_if:0:15}
+# Host end of the veth: interface names are at most 15 characters, so a
+# prefix of the namespace name is not unique (bmc-nico-server-01 and -02);
+# use a hash of it.
+host_if="nn$(printf '%s' "$name" | sha256sum | cut -c1-12)"
 if [ "$action" = down ]; then
   ip link del "$host_if" 2>/dev/null || true
   ip netns del "$name" 2>/dev/null || true
   exit 0
 fi
 for i in $(seq 1 120); do ip link show "$BRIDGE" >/dev/null 2>&1 && break; sleep 1; done
-ip netns list | grep -qx "$name\( .*\)\?" || ip netns add "$name"
 if ! ip link show "$host_if" >/dev/null 2>&1; then
+  # No host end: start the namespace from scratch (its old veth goes with it).
+  ip netns del "$name" 2>/dev/null || true
+  ip netns add "$name"
   ip link add "$host_if" type veth peer name eth0 netns "$name"
 fi
 ip link set "$host_if" master "$BRIDGE" up
