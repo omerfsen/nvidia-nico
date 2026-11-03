@@ -1,0 +1,40 @@
+# Local tooling
+.venv/
+.collections/
+__pycache__/
+*.pyc
+.ansible/
+graphify-out
+
+# Collection build output
+*.tar.gz
+
+# VM artefacts: never commit disks, images or cloud-init seeds
+*.qcow2
+*.img
+*.iso
+*.raw
+*.vmdk
+
+# Keys, credentials and kubeconfigs
+.keys/
+*_ed25519
+*_ed25519.pub
+*_rsa
+*_rsa.pub
+id_*
+*.key
+*.kubeconfig
+admin.conf
+/kubeconfig*
+*.token
+.vault_pass*
+vault-password*
+
+# Local inventory overrides
+inventory/*/group_vars/all/local.yml
+inventory/*/host_vars/
+*.local.yml
+
+# galaxy-importer output
+importer_result.json
