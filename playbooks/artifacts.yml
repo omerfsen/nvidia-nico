@@ -1,0 +1,14 @@
+---
+# The lab's artifact server: OS images (and later other boot artifacts) over
+# plain HTTP on the site network, for the servers NICo provisions.
+#
+#   ansible-playbook -i inventory/kvm omerfsen.nico.artifacts
+
+- name: Artifact server
+  hosts: kvm_hosts
+  become: true
+  gather_facts: false
+  roles:
+    - role: omerfsen.nico.nico_artifacts
+      vars:
+        nico_artifacts_address: "{{ nico_kvm_site_gateway }}"

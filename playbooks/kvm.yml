@@ -11,6 +11,9 @@
 - name: Registry
   ansible.builtin.import_playbook: registry.yml
 
+- name: Artifact server
+  ansible.builtin.import_playbook: artifacts.yml
+
 - name: Site cluster
   ansible.builtin.import_playbook: cluster.yml
 
