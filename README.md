@@ -127,6 +127,85 @@ GPU's display output.
 curl -k https://192.168.92.11/redfish/v1/Systems/System.Embedded.1
 ```
 
+## Kubernetes on the servers
+
+This collection stops at "NICo installed an OS". To make the servers a
+Kubernetes cluster, run [omerfsen.stratum](https://github.com/omerfsen/stratum)
+([CIQ Stratum](https://github.com/ctrliq/stratum), a Kubernetes distribution
+for RHEL-family hosts) on servers NICo provisioned with Rocky Linux.
+
+**Why not Cluster API?** NICo's own route to Kubernetes is
+[CAPNICo](https://github.com/dsx-ai-factory/cluster-api-provider-nico), the
+Cluster API provider for NICo (NVKE uses it too), and it cannot handle this
+zero-DPU site. A site without DPUs has only FLAT VPCs, and NICo's REST API
+creates an instance in a FLAT VPC only with `autoNetwork: true` and no
+interfaces. CAPNICo (v0.1.0 and `main` as of 2026-11-03) always sends at
+least one subnet or VPC-prefix interface (`MinItems=1`) and has no
+`autoNetwork` field, so NICo rejects its instances; NVKE (v0.22.0, which
+bundles CAPNICo v0.0.45) does the same. A newer NICo does not change this;
+CAPNICo needs FLAT VPC support. Details in the
+[build log](https://github.com/omerfsen/nvidia-nico/blob/main/docs/build-log.md).
+
+**With Stratum:**
+
+1. Give every server Rocky Linux, in `inventory/kvm/group_vars/all/local.yml`
+   (release a server's instance first if it already has another OS; see
+   [Access](#access)), then run `provision.yml`:
+
+   ```yaml
+   nico_kvm_instances:
+     - {server: nico-server-01, hostname: nico-rocky-01, os: rocky-10.2-20260525}
+     - {server: nico-server-02, hostname: nico-rocky-02, os: rocky-10.2-20260525}
+   ```
+
+2. An inventory for Stratum, with the addresses NICo gave the servers
+   (`nico-admin-cli instance show`):
+
+   ```yaml
+   # stratum.yml
+   all:
+     vars:
+       ansible_user: rocky
+       ansible_ssh_private_key_file: ~/.ssh/nico/instance_ed25519
+       stratum_cluster_name: nico-workload
+       stratum_node_cidr: 192.168.92.0/24     # NICo's HostInband segment
+     children:
+       stratum_control_plane:
+         hosts:
+           nico-rocky-01: {ansible_host: 192.168.92.10}
+       stratum_workers:
+         hosts:
+           nico-rocky-02: {ansible_host: 192.168.92.13}
+   ```
+
+3. Install it:
+
+   ```shell
+   ansible-galaxy collection install omerfsen.stratum:0.1.0
+   ansible-playbook -i stratum.yml omerfsen.stratum.cluster
+   export KUBECONFIG=~/.kube/nico-workload.yaml
+   kubectl get nodes -o wide
+   ```
+
+Stratum keeps SELinux enforcing and configures firewalld; with one control
+plane it needs no VIP (three need a free address on the node subnet,
+`stratum_vip`). Reprovisioning a server through NICo wipes it, so remove it
+from the cluster first.
+
+About Stratum:
+
+- [CIQ Stratum](https://ciq.com/products/stratum/): product page
+- [ctrliq/stratum](https://github.com/ctrliq/stratum): source and
+  [releases](https://github.com/ctrliq/stratum/releases) (the collection
+  defaults to [v1.37.1-stratum.0](https://github.com/ctrliq/stratum/releases/tag/v1.37.1-stratum.0),
+  Kubernetes 1.37.1)
+- [omerfsen.stratum on Galaxy](https://galaxy.ansible.com/ui/repo/published/omerfsen/stratum/)
+  and [on GitHub](https://github.com/omerfsen/stratum)
+- Its docs: [existing hosts and bare metal](https://github.com/omerfsen/stratum/blob/main/docs/existing-hosts.md)
+  (requirements, air-gapped installs, signature checks),
+  [how it works](https://github.com/omerfsen/stratum/blob/main/docs/how-it-works.md),
+  [variables](https://github.com/omerfsen/stratum/blob/main/docs/variables.md)
+
 ## Roles
 
 | Role | Does |
