@@ -7,10 +7,11 @@ PIPELINES=release-please pr-title ansible-galaxy upstream-images
 # release-please: bumps these, writes CHANGELOG.md, tags vX.Y.Z (which
 # publishes to Galaxy through ansible-galaxy). Runs as the release GitHub
 # App (RELEASE_APP_ID / RELEASE_APP_KEY in the "release" environment).
-# Off until the lab works end to end: a Galaxy version can never be
-# re-uploaded, so no half-built collection gets released.
+# On since the lab passed end to end (from scratch, then changed=0); a
+# Galaxy version can never be re-uploaded, so turn it off before merging
+# anything half-built.
 VERSION_FILES=version.txt galaxy.yml
-RELEASE_PLEASE_ENABLED=false
+RELEASE_PLEASE_ENABLED=true
 RELEASE_PLEASE_RUNNER=ubuntu-24.04
 
 PR_TITLE_ENABLED=true
