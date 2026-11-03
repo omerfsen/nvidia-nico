@@ -22,9 +22,10 @@ nico_images_log_dir: "/home/{{ nico_images_user }}/nico-build-logs"
 # Upper bound for one make run, in seconds.
 nico_images_build_timeout: 21600
 
-# Every image the lab deploys. nvmetal-carbide is the Core image (nico)
-# under the name setup.sh uses.
-nico_images_names:
+# Every image the lab deploys, by the make target that builds it. A rerun
+# builds only the targets with a missing image. nvmetal-carbide is the Core
+# image (nico) under the name setup.sh uses.
+nico_images_make_images:
   - nico
   - nico-rest-api
   - nico-rest-workflow
@@ -36,5 +37,24 @@ nico_images_names:
   - nico-psm
   - nico-nsm
   - nico-mcp
-  - boot-artifacts-x86_64
-  - nvmetal-carbide
+nico_images_boot_artifacts: [boot-artifacts-x86_64]
+
+# bmc-mock, the Redfish BMC simulator the lab's servers use (its own
+# Dockerfile, not part of make images), built with the patches in
+# files/patches/<nico_images_version>/ applied; the tag says so.
+nico_images_bmc_mock_tag: "{{ nico_images_tag }}-nico.1"
+nico_images_bmc_mock_src: "/home/{{ nico_images_user }}/infra-controller-bmc-mock"
+
+# A registry that already has this release's images (e.g. docker.io/omerfsen,
+# the lab's published copies): missing images are copied from there before
+# anything is built. Empty: always build.
+nico_images_seed_registry: ""
+# Names that differ in the seed registry.
+nico_images_seed_names:
+  nico: nvmetal-carbide
+
+# Derived: every image reference (name:tag) that must be in the registry.
+nico_images_refs: >-
+  {{ (nico_images_make_images + nico_images_boot_artifacts + ['nvmetal-carbide'])
+     | product([nico_images_tag]) | map('join', ':') | list
+     + ['bmc-mock:' ~ nico_images_bmc_mock_tag] }}

@@ -1,11 +1,14 @@
 ---
-# Which of nico_images_names are missing from the registry. Sets
-# nico_images_missing (a list). Runs anywhere that reaches the registry;
+# Which of nico_images_refs (name:tag) are missing from the registry. Sets
+# nico_images_missing (a list of name:tag). Runs anywhere that reaches the registry;
 # nico_images_ca_path is a CA file there that trusts it.
 
 - name: Look up each image's manifest
   ansible.builtin.uri:
-    url: "https://{{ nico_images_registry.split('/')[0] }}/v2/{{ (nico_images_registry.split('/')[1:] + [item]) | join('/') }}/manifests/{{ nico_images_tag }}"
+    url: >-
+      https://{{ nico_images_registry.split('/')[0] }}/v2/{{
+      (nico_images_registry.split('/')[1:] + [item.split(':')[0]]) | join('/')
+      }}/manifests/{{ item.split(':')[1] }}
     method: HEAD
     ca_path: "{{ nico_images_ca_path | default(omit) }}"
     headers:
@@ -15,7 +18,7 @@
         application/vnd.oci.image.manifest.v1+json,
         application/vnd.docker.distribution.manifest.v2+json
     status_code: [200, 404]
-  loop: "{{ nico_images_names }}"
+  loop: "{{ nico_images_refs }}"
   register: nico_images_lookup
   check_mode: false
 

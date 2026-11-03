@@ -1,0 +1,14 @@
+# {{ ansible_managed }}
+[Unit]
+Description=NICo lab network namespace %i
+After=libvirtd.service network-online.target
+Wants=libvirtd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/nico-netns %i up
+ExecStop=/usr/local/sbin/nico-netns %i down
+
+[Install]
+WantedBy=multi-user.target

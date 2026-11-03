@@ -1,0 +1,81 @@
+---
+# ── bmc-mock binary, taken out of its image ──────────────────────────────
+- name: Which image the installed bmc-mock came from
+  ansible.builtin.slurp:
+    src: "{{ nico_server_bmc_mock_bin }}.image"
+  register: nico_server_bmc_mock_from
+  failed_when: false
+
+- name: Install bmc-mock from {{ nico_server_bmc_mock_image }}
+  ansible.builtin.shell: |
+    set -euo pipefail
+    install -d -m 0755 {{ nico_server_bmc_mock_bin | dirname }}
+    cid=$(docker create {{ nico_server_bmc_mock_image }})
+    trap 'docker rm "$cid" >/dev/null' EXIT
+    docker cp "$cid:/usr/local/bin/bmc-mock" {{ nico_server_bmc_mock_bin }}.new
+    chmod 0755 {{ nico_server_bmc_mock_bin }}.new
+    mv {{ nico_server_bmc_mock_bin }}.new {{ nico_server_bmc_mock_bin }}
+    echo {{ nico_server_bmc_mock_image }} > {{ nico_server_bmc_mock_bin }}.image
+  args: {executable: /bin/bash}
+  when: (nico_server_bmc_mock_from.content | default('') | b64decode | trim) != nico_server_bmc_mock_image
+  changed_when: true
+  notify: Restart every mock BMC
+
+# ── Network namespaces ───────────────────────────────────────────────────
+- name: Directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop: [/etc/nico, /etc/nico/netns, /etc/nico/bmc]
+
+- name: Namespace script
+  ansible.builtin.template:
+    src: nico-netns.sh.j2
+    dest: /usr/local/sbin/nico-netns
+    mode: "0755"
+
+- name: Units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    mode: "0644"
+  loop: [nico-netns@.service, nico-bmc@.service, nico-dhcp-relay.service]
+  notify: Reload systemd
+
+# ── DHCP relay ───────────────────────────────────────────────────────────
+- name: Relay namespace settings
+  ansible.builtin.copy:
+    dest: /etc/nico/netns/nico-relay.env
+    content: |
+      BRIDGE={{ nico_server_bridge }}
+      ADDRESS={{ nico_server_relay_address }}
+      PREFIX={{ nico_server_prefix }}
+      GATEWAY={{ nico_server_gateway }}
+      MAC={{ nico_server_relay_mac }}
+    mode: "0644"
+  register: nico_server_relay_env
+
+- name: Relay configuration
+  ansible.builtin.template:
+    src: dhcp-relay.conf.j2
+    dest: /etc/nico/dhcp-relay.conf
+    mode: "0644"
+  notify: Restart the DHCP relay
+
+- name: Apply unit changes now
+  ansible.builtin.meta: flush_handlers
+
+# Not a handler: the namespace must be rebuilt before the relay starts below.
+- name: Rebuild the relay namespace when its settings changed  # noqa: no-handler
+  ansible.builtin.systemd_service:
+    name: nico-netns@nico-relay.service
+    state: restarted
+  when: nico_server_relay_env is changed
+
+- name: Relay namespace and relay running
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop: [nico-netns@nico-relay.service, nico-dhcp-relay.service]

@@ -1,0 +1,22 @@
+---
+# Copy missing images from a registry that already has this release's
+# images (nico_images_seed_registry, e.g. the lab's Docker Hub copies) into
+# nico_images_registry, with Docker on this host, so only what the seed lacks
+# gets built. Expects nico_images_missing (from check.yml); refreshes it.
+# The seed has no `nico` repository: the Core image is `nvmetal-carbide` there.
+
+- name: Copy each missing image from the seed registry
+  ansible.builtin.shell: |
+    set -uo pipefail
+    src={{ nico_images_seed_registry }}/{{ nico_images_seed_names.get(item.split(':')[0], item.split(':')[0]) }}:{{ item.split(':')[1] }}
+    dst={{ nico_images_registry }}/{{ item }}
+    if ! docker pull -q "$src" >/dev/null 2>&1; then echo "not in seed"; exit 0; fi
+    docker tag "$src" "$dst" && docker push -q "$dst" >/dev/null && echo copied
+  args: {executable: /bin/bash}
+  loop: "{{ nico_images_missing }}"
+  register: nico_images_seeded
+  changed_when: "'copied' in nico_images_seeded.stdout"
+  failed_when: nico_images_seeded.rc != 0
+
+- name: What is still missing
+  ansible.builtin.include_tasks: check.yml

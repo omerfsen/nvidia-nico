@@ -1,6 +1,8 @@
 ---
-# NICo's container images, built from source and pushed to the lab registry.
-# Only when one is missing: then a throwaway build VM is created, runs NICo's
+# NICo's container images in the lab registry. Missing ones are copied from
+# nico_kvm_images_seed first (the lab's published copies on Docker Hub; set
+# it to "" to always build from source). What is still missing is built: a
+# throwaway build VM is created, runs NICo's
 # build-host bootstrap and `make images` + `make images-boot-artifacts`
 # (amd64), and is removed again afterwards (nico_kvm_build_vm_keep: true
 # keeps it). Needs registry.yml first.
@@ -20,6 +22,19 @@
         nico_images_registry: "{{ nico_kvm_registry_repo }}"
         nico_images_version: "{{ nico_kvm_nico_version }}"
         nico_images_ca_path: "{{ nico_kvm_registry_ca }}"
+
+    - name: Copy what a seed registry has
+      ansible.builtin.include_role:
+        name: omerfsen.nico.nico_images
+        tasks_from: seed.yml
+      vars:
+        nico_images_registry: "{{ nico_kvm_registry_repo }}"
+        nico_images_version: "{{ nico_kvm_nico_version }}"
+        nico_images_ca_path: "{{ nico_kvm_registry_ca }}"
+        nico_images_seed_registry: "{{ nico_kvm_images_seed }}"
+      when:
+        - nico_images_missing | length > 0
+        - nico_kvm_images_seed | length > 0
 
     - name: Report
       ansible.builtin.debug:

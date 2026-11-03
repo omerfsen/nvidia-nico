@@ -1,0 +1,85 @@
+---
+argument_specs:
+  main:
+    short_description: libvirt VMs with mock Redfish BMCs and a DHCP relay, for NICo
+    description:
+      - 'On the KVM host: the HostInband DHCP relay (dnsmasq) in its own network namespace; per server
+        a blank-disk UEFI VM with a TPM, defined shut off, and NICo''s bmc-mock (libvirt backend) in a
+        network namespace with the BMC MAC and address the server''s instance index gives, serving Redfish
+        on port 443 with a self-signed certificate. Checks the BMC reports the VM''s NIC MAC.'
+    options:
+      nico_server_bmc_mock_image:
+        type: str
+        default: 192.168.91.1:5000/nico/bmc-mock:v2.3.0
+        description: bmc-mock image (built by playbooks/images.yml); the binary is taken out of it and
+          run on the host, inside each BMC's network namespace.
+      nico_server_bmc_mock_bin:
+        type: str
+        default: /usr/local/libexec/nico/bmc-mock
+        description: Bmc mock bin.
+      nico_server_network:
+        type: str
+        default: nico-inband
+        description: The HostInband network (omerfsen.nico.nico_network creates it).
+      nico_server_bridge:
+        type: str
+        default: virbr-nicoib
+        description: Bridge.
+      nico_server_prefix:
+        type: int
+        default: 24
+        description: Prefix.
+      nico_server_gateway:
+        type: str
+        default: 192.168.92.1
+        description: Gateway.
+      nico_server_relay_address:
+        type: str
+        default: 192.168.92.2
+        description: 'DHCP relay for the segment, in its own network namespace: libvirt''s dnsmasq for
+          the site network owns UDP 67 on the bridge where nico-dhcp''s replies come in, so a relay on
+          the host would never see them. The relay address is the giaddr NICo selects the segment by;
+          keep it inside the segment''s reserve_first range.'
+      nico_server_relay_mac:
+        type: str
+        default: 02:4e:49:43:4f:02
+        description: Relay mac.
+      nico_server_dhcp_server:
+        type: str
+        default: 192.168.91.200
+        description: Dhcp server.
+      nico_server_servers:
+        type: list
+        default: []
+        description: 'Each server: name, index (the bmc-mock instance index, 1-254; it makes the generated
+          serials and MACs unique), bmc_ip, and optionally vcpus, memory_mb, disk_gb, profile, hostdevs
+          (PCI functions already on vfio-pci).'
+        elements: dict
+      nico_server_profile:
+        type: str
+        default: dell_poweredge_r750
+        description: Profile.
+      nico_server_vcpus:
+        type: int
+        default: 4
+        description: Vcpus.
+      nico_server_memory_mb:
+        type: int
+        default: 8192
+        description: Memory mb.
+      nico_server_disk_gb:
+        type: int
+        default: 60
+        description: Disk gb.
+      nico_server_disk_path:
+        type: str
+        default: /var/lib/libvirt/images
+        description: Disk path.
+      nico_server_ovmf_code:
+        type: str
+        default: /usr/share/OVMF/OVMF_CODE_4M.fd
+        description: Ovmf code.
+      nico_server_ovmf_vars:
+        type: str
+        default: /usr/share/OVMF/OVMF_VARS_4M.fd
+        description: Ovmf vars.

@@ -1,0 +1,17 @@
+# {{ ansible_managed }}
+[Unit]
+Description=NICo lab mock BMC for %i
+BindsTo=nico-netns@bmc-%i.service
+After=nico-netns@bmc-%i.service libvirtd.service
+
+[Service]
+EnvironmentFile=/etc/nico/bmc/%i.env
+ExecStart=/usr/bin/ip netns exec bmc-%i {{ nico_server_bmc_mock_bin }} --port 443 --cert-path /etc/nico/bmc/%i \
+  --machine-role host --state-backend libvirt --libvirt-uri qemu:///system \
+  --libvirt-domain %i --hardware-profile ${PROFILE} --dpu-count 0 \
+  --instance-index ${INDEX}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

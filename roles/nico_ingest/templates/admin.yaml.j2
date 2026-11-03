@@ -1,0 +1,32 @@
+# {{ ansible_managed }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nico-lab-admin
+  namespace: {{ nico_ingest_namespace }}
+  labels: {app.kubernetes.io/name: nico-lab-admin, app.kubernetes.io/part-of: nico-lab}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: nico-lab-admin}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: nico-lab-admin}
+    spec:
+      containers:
+        - name: admin
+          image: {{ nico_ingest_image }}
+          command: ["sleep", "infinity"]
+          env:
+            - {name: API_URL, value: "{{ nico_ingest_api_url }}"}
+            - {name: ROOT_CA_PATH, value: /etc/nico-admin/ca.crt}
+            - {name: CLIENT_CERT_PATH, value: /etc/nico-admin/tls.crt}
+            - {name: CLIENT_KEY_PATH, value: /etc/nico-admin/tls.key}
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 512Mi}
+          volumeMounts:
+            - {name: cert, mountPath: /etc/nico-admin, readOnly: true}
+      volumes:
+        - name: cert
+          secret: {secretName: nico-lab-admin-cert, defaultMode: 0400}
