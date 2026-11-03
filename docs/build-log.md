@@ -545,3 +545,34 @@ the provisioned lab: `changed=0`, SSH check passing.
 
 `kvm_destroy.yml` now also removes the servers (VMs, mock BMC units and
 namespaces) and the DHCP relay, keeping the registry and artifact server.
+
+## Step 14: From scratch (2026-11-03)
+
+`kvm_destroy.yml` removed every `nico-*` VM (servers with their BMCs and
+relay, site nodes), keeping the registry, artifact server and networks; then
+one `kvm.yml` from `main` rebuilt the lab. Networks, registry, artifacts,
+site cluster, images (all found in the registry, no build VM), NICo's
+control plane (all seven phases with no intervention) and both servers
+ingested to Ready (about 10 minutes) went through in 28 minutes. Provisioning
+failed, twice:
+
+**Failure 1:** "Create the allocation" failed (hidden by `no_log`); the same
+call by hand: `400 Failed to parse request data`. The role sent
+`constraintValue` as the string `"1"`: a field templated on its own renders
+as a string. The first, manual test had sent a number. **Fix:** the body as
+one Jinja expression, which keeps the number.
+
+**Failure 2:** the next run "allocated" an instance that never appeared, and
+waited for SSH (the host still ran scout: `Permission denied (publickey)`).
+The OS image was never registered: the block "Register the OS image" ran
+`when: image ID is empty`, and Ansible checks a block's `when` again for
+every task in it; its first task set the ID, so "Create it" was skipped. The
+first test had an image registered by hand. **Fix:** a separate
+`nico_instance_image_missing` flag.
+
+With both fixes `provision.yml` provisioned both servers: the GPU server is
+now provisioned too (`nico_kvm_instances` adds `nico-ubuntu-02` when a GPU is
+configured). `nico-ubuntu-02` boots on the RTX 4080's own screen and `lspci`
+inside it shows `NVIDIA AD103 [GeForce RTX 4080 SUPER]`.
+
+Lesson: test a role on a fresh lab, not only against state a manual run left.

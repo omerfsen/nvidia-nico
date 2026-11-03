@@ -134,15 +134,16 @@
     method: POST
     headers: "{{ nico_instance_headers }}"
     body_format: json
-    body:
-      name: "{{ nico_instance_allocation_name }}"
-      tenantId: "{{ nico_instance_tenant_id }}"
-      siteId: "{{ nico_instance_site_id }}"
-      allocationConstraints:
-        - resourceType: InstanceType
-          resourceTypeId: "{{ nico_instance_type_id }}"
-          constraintType: Reserved
-          constraintValue: "{{ nico_instance_instances | length }}"
+    # One expression, so constraintValue stays a number: the API rejects
+    # "1" ("Failed to parse request data").
+    body: >-
+      {{ {'name': nico_instance_allocation_name,
+          'tenantId': nico_instance_tenant_id,
+          'siteId': nico_instance_site_id,
+          'allocationConstraints': [{'resourceType': 'InstanceType',
+                                     'resourceTypeId': nico_instance_type_id,
+                                     'constraintType': 'Reserved',
+                                     'constraintValue': nico_instance_instances | length}]} }}
     status_code: 201
   when: nico_instance_allocations.json | selectattr('name', 'eq', nico_instance_allocation_name) | list | length == 0
   changed_when: true
@@ -211,8 +212,14 @@
       {{ (nico_instance_images.stdout | from_json | map(attribute='attributes')
           | selectattr('name', 'eq', nico_instance_os.name) | map(attribute='id.value') | first) | default('') }}
 
+# A separate flag: a block's when is evaluated again for every task in it,
+# and the first task below sets nico_instance_image_id.
+- name: Is the OS image missing?
+  ansible.builtin.set_fact:
+    nico_instance_image_missing: "{{ nico_instance_image_id | length == 0 }}"
+
 - name: Register the OS image
-  when: nico_instance_image_id | length == 0
+  when: nico_instance_image_missing | bool
   block:
     - name: A new image ID
       ansible.builtin.set_fact:
