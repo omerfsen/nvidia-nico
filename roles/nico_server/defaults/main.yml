@@ -1,0 +1,38 @@
+---
+# The "servers" NICo manages: libvirt VMs on the HostInband network, each
+# with a mock Redfish BMC (NICo's bmc-mock, libvirt backend) in its own
+# network namespace on the same L2, plus the DHCP relay that carries the
+# segment's DHCP to nico-dhcp. Runs on the KVM host as root.
+
+# bmc-mock image (built by playbooks/images.yml); the binary is taken out of
+# it and run on the host, inside each BMC's network namespace.
+nico_server_bmc_mock_image: 192.168.91.1:5000/nico/bmc-mock:v2.3.0
+nico_server_bmc_mock_bin: /usr/local/libexec/nico/bmc-mock
+
+# The HostInband network (omerfsen.nico.nico_network creates it).
+nico_server_network: nico-inband
+nico_server_bridge: virbr-nicoib
+nico_server_prefix: 24
+nico_server_gateway: 192.168.92.1
+
+# DHCP relay for the segment, in its own network namespace: libvirt's
+# dnsmasq for the site network owns UDP 67 on the bridge where nico-dhcp's
+# replies come in, so a relay on the host would never see them. The relay
+# address is the giaddr NICo selects the segment by; keep it inside the
+# segment's reserve_first range.
+nico_server_relay_address: 192.168.92.2
+nico_server_relay_mac: "02:4e:49:43:4f:02"
+nico_server_dhcp_server: 192.168.91.200
+
+# Each server: name, index (the bmc-mock instance index, 1-254; it makes the
+# generated serials and MACs unique), bmc_ip, and optionally vcpus,
+# memory_mb, disk_gb, profile, hostdevs (PCI functions already on vfio-pci).
+nico_server_servers: []
+nico_server_profile: dell_poweredge_r750
+nico_server_vcpus: 4
+nico_server_memory_mb: 8192
+nico_server_disk_gb: 60
+
+nico_server_disk_path: /var/lib/libvirt/images
+nico_server_ovmf_code: /usr/share/OVMF/OVMF_CODE_4M.fd
+nico_server_ovmf_vars: /usr/share/OVMF/OVMF_VARS_4M.fd

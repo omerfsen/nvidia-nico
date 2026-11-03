@@ -1,0 +1,9 @@
+# {{ ansible_managed }}
+# Relay only: no DNS, no DHCP server. Requests on the segment go to
+# nico-dhcp with giaddr {{ nico_server_relay_address }}.
+port=0
+interface=eth0
+dhcp-relay={{ nico_server_relay_address }},{{ nico_server_dhcp_server }}
+user=root
+pid-file=
+log-dhcp

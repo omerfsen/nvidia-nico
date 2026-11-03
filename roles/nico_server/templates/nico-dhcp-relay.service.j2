@@ -1,0 +1,14 @@
+# {{ ansible_managed }}
+[Unit]
+Description=DHCP relay for the NICo lab HostInband segment
+BindsTo=nico-netns@nico-relay.service
+After=nico-netns@nico-relay.service
+
+[Service]
+ExecStart=/usr/bin/ip netns exec nico-relay /usr/sbin/dnsmasq --keep-in-foreground \
+  --conf-file=/etc/nico/dhcp-relay.conf
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

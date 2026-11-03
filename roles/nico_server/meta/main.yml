@@ -1,0 +1,13 @@
+---
+galaxy_info:
+  role_name: nico_server
+  namespace: omerfsen
+  author: Omer Sen
+  description: libvirt VMs with mock Redfish BMCs (bmc-mock) in their own network namespaces, and a DHCP relay, for NICo
+  license: Apache-2.0
+  min_ansible_version: "2.16"
+  platforms:
+    - name: Ubuntu
+      versions: [noble]
+  galaxy_tags: [nico, redfish, libvirt, bmc]
+dependencies: []

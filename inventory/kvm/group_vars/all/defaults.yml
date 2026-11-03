@@ -71,3 +71,17 @@ nico_kvm_build_vm:
   memory_mb: 32768
   disk_gb: 200
 nico_kvm_build_vm_keep: false
+
+# The servers NICo manages: VMs on the HostInband network, each with a mock
+# Redfish BMC (bmc-mock, Dell R750 profile, no DPUs). index is bmc-mock's
+# instance index (unique identities); bmc_ip sits in the segment's reserved
+# range (.1-.10 are the gateway and the relay, see nico_hostinband_networks).
+nico_kvm_servers:
+  - name: nico-server-01
+    index: 1
+    bmc_ip: "{{ nico_kvm_inband_subnet }}.11"
+    vcpus: 4
+    memory_mb: 8192
+    disk_gb: 60
+# nico-dhcp's VIP, where the segment's DHCP relay sends requests.
+nico_kvm_dhcp_vip: "{{ nico_kvm_site_subnet }}.200"

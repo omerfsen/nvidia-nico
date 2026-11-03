@@ -1,0 +1,27 @@
+---
+- name: Servers are described
+  ansible.builtin.assert:
+    that:
+      - item.name is defined and item.index is defined and item.bmc_ip is defined
+      - item.index | int >= 1 and item.index | int <= 254
+    fail_msg: "Each server needs name, index (1-254) and bmc_ip: {{ item }}"
+    quiet: true
+  loop: "{{ nico_server_servers }}"
+  loop_control: {label: "{{ item.name | default('?') }}"}
+
+- name: Identities bmc-mock generates for each instance index
+  ansible.builtin.set_fact:
+    nico_server_list: >-
+      {{ nico_server_list | default([]) + [item | combine({
+           'host_mac': '02:00:00:%02x:00:02' | format(item.index | int),
+           'bmc_mac': '02:00:00:%02x:00:01' | format(item.index | int)})] }}
+  loop: "{{ nico_server_servers }}"
+  loop_control: {label: "{{ item.name }}"}
+
+- name: Network namespaces and the DHCP relay
+  ansible.builtin.import_tasks: host.yml
+
+- name: Each server
+  ansible.builtin.include_tasks: server.yml
+  loop: "{{ nico_server_list | default([]) }}"
+  loop_control: {loop_var: nico_server, label: "{{ nico_server.name }}"}
