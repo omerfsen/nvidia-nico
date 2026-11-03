@@ -1,0 +1,6 @@
+---
+- name: Restart nico-artifacts
+  ansible.builtin.systemd_service:
+    name: nico-artifacts.service
+    state: restarted
+    daemon_reload: true

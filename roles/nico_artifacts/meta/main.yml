@@ -1,0 +1,13 @@
+---
+galaxy_info:
+  role_name: nico_artifacts
+  namespace: omerfsen
+  author: Omer Sen
+  description: Plain HTTP file server on the KVM host for OS images and boot artifacts the lab's servers fetch
+  license: Apache-2.0
+  min_ansible_version: "2.16"
+  platforms:
+    - name: Ubuntu
+      versions: [noble]
+  galaxy_tags: [nico, http, artifacts, provisioning]
+dependencies: []
