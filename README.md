@@ -44,3 +44,18 @@ VMs are created with `omerfsen.nvke.libvirt_vm` (dependency).
 ## License
 
 Apache-2.0
+
+## Images
+
+NICo publishes no public images, so the lab builds them from source
+(`playbooks/images.yml`) or copies the published builds from Docker Hub
+(`docker.io/omerfsen/*`, unofficial, not affiliated with NVIDIA) into its
+registry first. The GitHub Actions workflow `upstream-images` (manual only:
+Actions → upstream-images → Run workflow) rebuilds them with
+`tools/build-nico-images.sh` and pushes them to Docker Hub. It needs a Docker
+Hub access token (Read & Write) as secret `DOCKERHUB_TOKEN` in the `images`
+environment:
+
+```shell
+gh secret set DOCKERHUB_TOKEN --env images -R omerfsen/nvidia-nico
+```
