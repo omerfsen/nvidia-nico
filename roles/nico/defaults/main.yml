@@ -1,0 +1,108 @@
+---
+# NICo's control plane on an existing Kubernetes cluster, installed with
+# NICo's own helm-prereqs/setup.sh from this host (the controller): a
+# zero-DPU site with one shared HostInband segment. The images must already
+# be in nico_image_registry (omerfsen.nico.nico_images). Every version and
+# checksum is pinned.
+
+nico_version: v2.3.0
+# The commit the tag must point at.
+nico_commit: abc446b33dc773d9b8c7f41b54cccf812758b165
+nico_repo: https://github.com/dsx-ai-factory/infra-controller.git
+
+# Admin kubeconfig of the site cluster, on this host.
+nico_kubeconfig: ~/.kube/nico-site.yaml
+
+# Where the images are, and their tag (no scheme).
+nico_image_registry: 192.168.91.1:5000/nico
+nico_image_tag: "{{ nico_version }}"
+# CA that trusts the registry, for preflight's registry checks on this host.
+nico_registry_ca: /etc/nico-registry/pki/ca.crt
+
+# Work area on this host: the NICo checkout, pinned tools, rendered values
+# and logs.
+nico_work_dir: ~/.cache/omerfsen-nico
+nico_src: "{{ nico_work_dir }}/infra-controller-{{ nico_version }}"
+nico_tools_dir: "{{ nico_work_dir }}/bin"
+
+# ── Tools setup.sh needs, pinned (helm >= 3.12, helmfile, helm-diff) ──────
+nico_helm_version: 3.22.1
+nico_helm_sha256: 896cf63684a42a723d61c980369d6e588330927deb13676ca0d85006dd6da0ea
+nico_helmfile_version: 1.8.2
+nico_helmfile_sha256: f179485c5bb9f8e20fbd8ea16d8807915988aba4d60131ee864fb3232452716e
+nico_helm_diff_version: 3.15.15
+nico_helm_diff_sha256: 504e99410611daa70702362e1b10dc74929df8a912cb3f6b5d21d1ee9d0cb7d9
+# setup.sh and preflight need python3 with PyYAML; this one is put first on
+# their PATH as `python3`.
+nico_python: /usr/bin/python3
+
+# ── Site ─────────────────────────────────────────────────────────────────
+nico_site_name: lab1
+nico_domain: nico.lab
+nico_api_hostname: "api-{{ nico_site_name }}.{{ nico_domain }}"
+# Data center ASN (FNN config is mandatory for nico-api; unused without DPUs).
+nico_datacenter_asn: 4266030000
+
+# MetalLB L2 pools on the site network, and each service's VIP in them.
+nico_metallb_internal_pool: 192.168.91.200-192.168.91.239
+nico_metallb_external_pool: 192.168.91.240-192.168.91.250
+nico_vips:
+  dhcp: 192.168.91.200
+  pxe: 192.168.91.201
+  unbound: 192.168.91.202
+  ssh_console: 192.168.91.203
+  dns: [192.168.91.204, 192.168.91.205]
+  ntp: [192.168.91.206, 192.168.91.207, 192.168.91.208]
+  api: 192.168.91.240
+
+# The resolver unbound forwards everything outside the site zones to.
+nico_upstream_dns: 192.168.91.1
+
+# Zero-DPU HostInband segments: the servers' host NICs and BMCs share one
+# relayed L2 (docs/provisioning/ip-and-network-configuration.md).
+nico_hostinband_networks:
+  - name: lab-inband
+    prefix: 192.168.92.0/24
+    gateway: 192.168.92.1
+    mtu: 1500
+    reserve_first: 10
+# Networks instances must not reach (the site network).
+nico_deny_prefixes: [192.168.91.0/24]
+
+# Pools nico-api allocates from (a range is applied once, on first sight).
+nico_pools:
+  lo_ip: {start: 10.254.0.10, end: 10.254.0.250}
+  vlan_id: {start: "100", end: "500"}
+  vni: {start: "1024500", end: "1024800"}
+  vpc_vni: {start: "1000", end: "1100"}
+
+# Lab sizes. Upstream sizes these for a production site: Vault requests
+# 2 CPU and 8 GiB per replica (24 GiB for three) and nico-api 8 GiB, which
+# three 12 GiB lab nodes cannot schedule.
+nico_vault_resources:
+  requests: {cpu: 250m, memory: 512Mi}
+  limits: {cpu: "1", memory: 2Gi}
+nico_api_resources:
+  requests: {cpu: 500m, memory: 1Gi}
+  limits: {cpu: "3", memory: 4Gi}
+
+# Small Postgres for a lab (upstream sizes it for a fleet).
+nico_postgres_resources:
+  limits: {cpu: "2", memory: 4Gi}
+  requests: {cpu: 250m, memory: 1Gi}
+
+# ── Images NICo needs that the lab provides ──────────────────────────────
+# unbound: NICo's chart expects an internal NVIDIA image. The lab builds a
+# small one (Alpine + unbound) and pushes it to the registry.
+nico_unbound_base_image: docker.io/library/alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+nico_unbound_package: unbound=1.25.2-r2
+nico_unbound_image: "{{ nico_image_registry }}/unbound"
+nico_unbound_tag: 1.25.2-r2
+
+# External Secrets: its chart pulls from oci.external-secrets.io, a CNAME to
+# a download-analytics gateway (gateway.scarf.sh) that DNS ad blockers often
+# block. Pull the same image from GitHub's registry instead.
+nico_eso_image_repository: ghcr.io/external-secrets/external-secrets
+
+# How long setup.sh may run, in seconds.
+nico_setup_timeout: 5400

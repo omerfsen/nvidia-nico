@@ -1,0 +1,67 @@
+# {{ ansible_managed }}
+# nico-api site config for a zero-DPU lab, from NICo {{ nico_version }}'s
+# helm-prereqs/values/nico-core.yaml template. Root keys stay above the first
+# [table].
+sitename = "{{ nico_site_name }}"
+initial_domain_name = "{{ nico_site_name }}.{{ nico_domain }}"
+attestation_enabled = false
+max_concurrent_machine_updates = 20
+dhcp_servers = ["{{ nico_vips.dhcp }}"]
+route_servers = []
+enable_route_servers = false
+# HostInband segments do not have to be in the site fabric.
+site_fabric_prefixes = []
+deny_prefixes = {{ nico_deny_prefixes | to_json }}
+datacenter_asn = {{ nico_datacenter_asn }}
+
+[site_explorer]
+run_interval = "30s"
+# No BlueField DPUs: ingest hosts without them
+# (docs/manuals/vpc/flat_vpcs_zero_dpu.md).
+dpu_policy = "ignore"
+
+# The lab's servers are VMs: no machine-validation image, no SKU/BOM.
+[machine_validation_config]
+enabled = false
+
+[bom_validation]
+enabled = false
+ignore_unassigned_machines = true
+
+[pools.lo-ip]
+type = "ipv4"
+ranges = [{ start = "{{ nico_pools.lo_ip.start }}", end = "{{ nico_pools.lo_ip.end }}" }]
+
+[pools.vlan-id]
+type = "integer"
+ranges = [{ start = "{{ nico_pools.vlan_id.start }}", end = "{{ nico_pools.vlan_id.end }}" }]
+
+[pools.vni]
+type = "integer"
+ranges = [{ start = "{{ nico_pools.vni.start }}", end = "{{ nico_pools.vni.end }}" }]
+
+[pools.vpc-vni]
+type = "integer"
+ranges = [{ start = "{{ nico_pools.vpc_vni.start }}", end = "{{ nico_pools.vpc_vni.end }}" }]
+
+{% for net in nico_hostinband_networks %}
+[networks.{{ net.name }}]
+type = "hostinband"
+prefix = "{{ net.prefix }}"
+gateway = "{{ net.gateway }}"
+mtu = {{ net.mtu }}
+reserve_first = {{ net.reserve_first }}
+
+{% endfor %}
+[ib_config]
+enabled = false
+
+[firmware_global]
+autoupdate = false
+no_reset_retries = true
+
+[machine_state_controller]
+failure_retry_time = "90m"
+
+# FNN is mandatory for nico-api; kept as NICo {{ nico_version }} ships it.
+{{ lookup('ansible.builtin.file', 'fnn-' ~ nico_version ~ '.toml') }}

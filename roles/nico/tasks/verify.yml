@@ -1,0 +1,44 @@
+---
+- name: Every pod in the NICo namespaces runs
+  ansible.builtin.shell: |
+    set -euo pipefail
+    bad=$(kubectl get pods -A --no-headers \
+      | awk '$1 ~ /^(nico-system|nico-rest|vault|postgres|cert-manager|external-secrets|metallb-system|temporal|flow)$/ \
+             && $4 != "Running" && $4 != "Completed" {print $1"/"$2" "$4}')
+    if [ -n "$bad" ]; then echo "$bad"; exit 1; fi
+  args: {executable: /bin/bash}
+  environment: "{{ nico_env }}"
+  register: nico_pods
+  changed_when: false
+  retries: 40
+  delay: 15
+  until: nico_pods.rc == 0
+
+- name: Every service VIP is assigned
+  ansible.builtin.command: kubectl get svc -A -o json
+  environment: "{{ nico_env }}"
+  register: nico_services
+  changed_when: false
+
+- name: The VIPs match
+  ansible.builtin.assert:
+    that: item in nico_assigned_vips
+    fail_msg: "No LoadBalancer service has {{ item }}; assigned: {{ nico_assigned_vips | join(', ') }}"
+    quiet: true
+  loop: "{{ [nico_vips.dhcp, nico_vips.pxe, nico_vips.unbound, nico_vips.ssh_console, nico_vips.api] + nico_vips.dns + nico_vips.ntp }}"
+  vars:
+    nico_assigned_vips: >-
+      {{ (nico_services.stdout | from_json)['items']
+         | selectattr('spec.type', 'eq', 'LoadBalancer')
+         | map(attribute='status.loadBalancer.ingress') | select | flatten
+         | map(attribute='ip') | list }}
+
+- name: Keycloak issues a token
+  ansible.builtin.command: ./keycloak/get-token.sh
+  args:
+    chdir: "{{ nico_src_dir }}/helm-prereqs"
+  environment: "{{ nico_env }}"
+  register: nico_token
+  changed_when: false
+  no_log: true
+  failed_when: nico_token.rc != 0 or (nico_token.stdout | trim | length) < 100

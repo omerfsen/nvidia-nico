@@ -1,0 +1,29 @@
+# {{ ansible_managed }}
+# MetalLB for the lab: two L2 pools on the site network, no BGP.
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: vip-pool-internal
+  namespace: metallb-system
+spec:
+  addresses:
+    - {{ nico_metallb_internal_pool }}
+---
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: vip-pool-external
+  namespace: metallb-system
+spec:
+  addresses:
+    - {{ nico_metallb_external_pool }}
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: vip-l2
+  namespace: metallb-system
+spec:
+  ipAddressPools:
+    - vip-pool-internal
+    - vip-pool-external

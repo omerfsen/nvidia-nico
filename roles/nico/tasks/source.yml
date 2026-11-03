@@ -1,0 +1,20 @@
+---
+# A checkout of the pinned release. The role edits two files in it
+# (render.yml), so it is cloned once and never updated in place: another
+# version gets its own directory (nico_src includes the version).
+
+- name: Clone {{ nico_version }}
+  ansible.builtin.git:
+    repo: "{{ nico_repo }}"
+    dest: "{{ nico_src_dir }}"
+    version: "{{ nico_version }}"
+    depth: 1
+    recursive: false
+    update: false
+  register: nico_checkout
+
+- name: The checkout is the pinned commit
+  ansible.builtin.assert:
+    that: nico_checkout.after == nico_commit
+    fail_msg: "{{ nico_src_dir }} is at {{ nico_checkout.after }}, not {{ nico_commit }} ({{ nico_version }}). Remove it and rerun."
+    quiet: true

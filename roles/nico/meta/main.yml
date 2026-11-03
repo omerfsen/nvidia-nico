@@ -1,0 +1,13 @@
+---
+galaxy_info:
+  role_name: nico
+  namespace: omerfsen
+  author: Omer Sen
+  description: NVIDIA Infra Controller (NICo) control plane on Kubernetes with NICo's helm-prereqs, for a zero-DPU lab
+  license: Apache-2.0
+  min_ansible_version: "2.16"
+  platforms:
+    - name: Ubuntu
+      versions: [noble]
+  galaxy_tags: [nico, nvidia, baremetal, kubernetes]
+dependencies: []

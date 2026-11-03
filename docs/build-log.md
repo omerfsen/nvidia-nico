@@ -238,3 +238,70 @@ failed on every node: `dial tcp 0.0.0.0:443`. The name is a CNAME to
 **Fix:** use the same image from `ghcr.io/external-secrets/external-secrets`
 (the `nico` role overrides the chart's three image repositories), so the lab
 does not depend on the LAN's DNS block list.
+
+## Step 10: The NICo control plane (2026-11-03)
+
+Role `nico`, run from dragon against the site cluster (`playbooks/nico.yml`):
+pinned helm 3.22.1, helmfile 1.8.2 and helm-diff 3.15.15 in its own tool
+directory, a `python3` with PyYAML first on `setup.sh`'s PATH (brew's 3.15
+has none), the v2.3.0 checkout (commit checked), a small unbound image
+(Alpine 3.24.2 + `unbound=1.25.2-r2`; NICo's chart expects an internal
+NVIDIA image), the lab's values rendered, then NICo's own
+`helm-prereqs/setup.sh -y --skip-dpf --skip-rms` after a standalone
+`preflight.sh` (without `-y`, so its errors stop the run). `setup.sh` always
+changes something on a rerun, so it runs only when the fingerprint of its
+inputs differs from the one recorded in ConfigMap `default/nico-lab-install`
+after the last good run.
+
+The lab's values: site `lab1`, domain `lab1.nico.lab`, `dpu_policy =
+"ignore"`, one `hostinband` network `192.168.92.0/24` (gateway `.1`, first 10
+reserved), machine and BOM validation off, `siteCredentials` on (BMC root
+and UEFI passwords generated), RMS off; MetalLB L2 pools `.200-.239` and
+`.240-.250` on `nico-site`: DHCP `.200`, PXE `.201`, unbound `.202`, SSH
+console `.203`, DNS `.204-.205`, NTP `.206-.208`, API `.240`.
+
+**Failure 1:** phase 6 (Core): `namespaces "forge-system" not found`. The
+`nico-api` and `nico-pxe` charts create ExternalName aliases for the
+pre-rename hostnames (`carbide-api.forge-system...`) in `forge-system`, and
+their comment says helm-prereqs owns that namespace; nothing on the
+`--skip-dpf` path creates it. **Fix:** `legacyAlias.enabled: false` for
+both: no pre-rename clients here, and per the chart's own comment the
+certificate does not cover that name anyway.
+
+**Failure 2:** phase 6 again, `UPGRADE FAILED: context deadline exceeded`:
+`nico-api` stayed Pending (`0/3 nodes are available: 3 Insufficient
+memory`). Upstream sizes for production: each of the three Vault replicas
+requests 2 CPU and 8 GiB (24 GiB in all) and `nico-api` 8 GiB, against 11.6
+GiB allocatable per lab node. **Fix:** `nico_vault_resources` (requests
+250m / 512 MiB, limit 2 GiB) through a rewritten
+`operators/values/vault.yaml`, and `nico_api_resources` (500m / 1 GiB,
+limit 4 GiB) in the Core values.
+
+**Failure 3:** at the same time `nico-pxe`'s init container crash-looped:
+`cp: can't create directory '/boot-artifacts/blobs/internal'`. The
+`bootArtifactContainers` command in NICo's own example values copies into a
+directory nobody creates. **Fix:** `mkdir -p` before the copy.
+
+**Failure 4:** with memory fixed, `nico-api` crash-looped at startup:
+`no rows returned by a query that expected to return at least one row ...
+WHERE network_segment_type = 'admin'` (`crates/api-core/src/setup.rs:1467`).
+NICo's template ships `[fnn.admin_vpc] enabled = true`, and with it on
+nico-api creates the admin VPC from the admin network segment at startup
+(`crates/api-core/src/db_init.rs:470-481`); a zero-DPU site with only a
+HostInband segment has none. **Fix:** `[fnn.admin_vpc] enabled = false` in
+the role's copy of the FNN block (FNN routing is a DPU-site feature).
+
+**Result:** `setup.sh` ran all seven phases ("Setup complete"; site UUID
+`daf8564a-0fdf-4f3a-9453-fc4fc6071513`), 80 pods Running, every VIP
+assigned (API `.240`, DHCP `.200`, PXE `.201`, unbound `.202`, SSH console
+`.203`, DNS `.204-.205`, NTP `.206-.208`), Keycloak issues a token. Memory
+requests per node 27-34% (85% before the Vault/nico-api sizing).
+
+Vault's StatefulSet uses `OnDelete`, so its pods kept the 8 GiB requests
+until deleted: restarting them one at a time applied the new size, and each
+came back sealed. The next run changed only "Unseal Vault" (setup.sh
+skipped: unchanged fingerprint); the run after that: `changed=0`.
+
+```shell
+ansible-playbook -i inventory/kvm playbooks/nico.yml
+```
