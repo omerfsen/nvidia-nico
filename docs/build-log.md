@@ -296,3 +296,29 @@ BMC, a self-signed certificate per BMC for its IP, passed with
 broadcast DHCP from `02:00:00:01:00:02`; the relay forwarded each request to
 `192.168.91.200` (`DHCP relay at 192.168.92.2 -> 192.168.91.200`).
 `ForceOff` stopped it again. Rerun: `changed=0`.
+
+## Step 9: Patching bmc-mock so Dell jobs complete (2026-11-03)
+
+Reading NICo's state machine for a zero-DPU Dell host showed a blocker
+before any host was ingested: NICo sets BIOS attributes, the boot order and
+the UEFI password through Dell iDRAC jobs, and waits for each job to reach
+`Completed` (`crates/machine-controller/src/handler/bios_config.rs:147-152`,
+`crates/machine-controller/src/handler.rs:7903-7921`). bmc-mock creates those
+jobs as `Scheduled` and completes them only on its `BmcEvent::PowerOn`
+(`crates/bmc-mock/src/bmc_state.rs:160-186`). Only machine-a-tron raises that
+event; standalone bmc-mock with the libvirt backend never does, so the host
+would wait in HostInit forever.
+
+**Fix:** a 28-line patch, `roles/nico_images/files/patches/v2.3.0/0001-...patch`:
+a `Callbacks::power_on_event_on_reset()` (default `false`, `true` for the
+libvirt backend), and the Reset handler raises `PowerOn` after an accepted
+`On`, `ForceOn`, `ForceRestart`, `GracefulRestart` or `PowerCycle` when the
+backend asks for it, as a real iDRAC completes pending jobs when the host
+restarts. machine-a-tron and the internal backend behave as before. The
+image is tagged `bmc-mock:v2.3.0-nico.1`; `nico_images` builds it from a
+separate worktree with the patches applied, and only builds targets whose
+images are missing.
+
+**Check:** `POST .../iDRAC.Embedded.1/Jobs` on `nico-server-01`'s BMC made
+job `JID_4297...` `Scheduled`; Redfish `On` started the VM and the job read
+`Completed`.

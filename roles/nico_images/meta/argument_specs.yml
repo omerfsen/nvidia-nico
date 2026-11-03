@@ -3,67 +3,114 @@ argument_specs:
   main:
     short_description: Build NICo's images from source and push them
     description:
-      - On an Ubuntu 24.04 build host that trusts the registry, checks out the
-        pinned NICo release, runs NICo's scripts/setup-build-host.sh once
-        (then reboots), runs make images and make images-boot-artifacts for
-        amd64, publishes the Core image also as nvmetal-carbide, and checks
-        every image is in the registry.
-      - Skips the build when nico_images_missing is empty.
-    options: &nico_images_options
-      nico_images_repo:
+      - 'On an Ubuntu 24.04 build host that trusts the registry: checks out the pinned NICo release, runs
+        NICo''s scripts/setup-build-host.sh once (no reboot: the sysctl is loaded and a new SSH session
+        picks up the docker group), then only the targets with a missing image: make images and make images-boot-artifacts
+        for amd64, the Core image again as nvmetal-carbide, and bmc-mock with the role''s patches; then
+        checks every image is in the registry.'
+    options:
+      nico_images_repo: &id001
         type: str
         default: https://github.com/dsx-ai-factory/infra-controller.git
-        description: NICo source repository.
-      nico_images_version:
+        description: Repo.
+      nico_images_version: &id002
         type: str
         default: v2.3.0
-        description: Release tag to build.
-      nico_images_commit:
+        description: Version.
+      nico_images_commit: &id003
         type: str
         default: abc446b33dc773d9b8c7f41b54cccf812758b165
-        description: Commit the tag must point at.
-      nico_images_registry:
+        description: The commit the tag must point at (v2.3.0, released 2026-10-31).
+      nico_images_registry: &id004
         type: str
         default: 192.168.91.1:5000/nico
-        description: Registry and path the images are pushed to.
-      nico_images_tag:
+        description: 'Where the images go: <registry>/<name>:<tag>.'
+      nico_images_tag: &id005
         type: str
-        default: "{{ nico_images_version }}"
-        description: Image tag.
-      nico_images_user:
+        default: '{{ nico_images_version }}'
+        description: Tag.
+      nico_images_user: &id006
         type: str
         default: ubuntu
-        description: Build user (gets Docker group membership from the bootstrap).
-      nico_images_src:
+        description: The build user's checkout and logs.
+      nico_images_src: &id007
         type: str
-        default: "/home/{{ nico_images_user }}/infra-controller"
-        description: Checkout path.
-      nico_images_log_dir:
+        default: /home/{{ nico_images_user }}/infra-controller
+        description: Src.
+      nico_images_log_dir: &id008
         type: str
-        default: "/home/{{ nico_images_user }}/nico-build-logs"
-        description: Build logs (one per make target).
-      nico_images_build_timeout:
+        default: /home/{{ nico_images_user }}/nico-build-logs
+        description: Log dir.
+      nico_images_build_timeout: &id009
         type: int
         default: 21600
-        description: Upper bound for one make run, seconds.
-      nico_images_names:
+        description: Upper bound for one make run, in seconds.
+      nico_images_make_images: &id010
         type: list
+        default:
+          - nico
+          - nico-rest-api
+          - nico-rest-workflow
+          - nico-rest-site-manager
+          - nico-rest-site-agent
+          - nico-rest-db
+          - nico-rest-cert-manager
+          - nico-flow
+          - nico-psm
+          - nico-nsm
+          - nico-mcp
+        description: Every image the lab deploys, by the make target that builds it. A rerun builds only
+          the targets with a missing image. nvmetal-carbide is the Core image (nico) under the name setup.sh
+          uses.
         elements: str
-        default: [nico, nico-rest-api, nico-rest-workflow, nico-rest-site-manager, nico-rest-site-agent,
-                  nico-rest-db, nico-rest-cert-manager, nico-flow, nico-psm, nico-nsm, nico-mcp,
-                  boot-artifacts-x86_64, nvmetal-carbide]
-        description: Every image that must end up in the registry.
-      nico_images_missing:
+      nico_images_boot_artifacts: &id011
+        type: list
+        default:
+          - boot-artifacts-x86_64
+        description: Boot artifacts.
+        elements: str
+      nico_images_bmc_mock_tag: &id012
+        type: str
+        default: '{{ nico_images_tag }}-nico.1'
+        description: bmc-mock, the Redfish BMC simulator the lab's servers use (its own Dockerfile, not
+          part of make images), built with the patches in files/patches/<nico_images_version>/ applied;
+          the tag says so.
+      nico_images_bmc_mock_src: &id013
+        type: str
+        default: /home/{{ nico_images_user }}/infra-controller-bmc-mock
+        description: Bmc mock src.
+      nico_images_refs: &id014
+        type: str
+        default: "{{ (nico_images_make_images + nico_images_boot_artifacts + ['nvmetal-carbide'])\n  \
+          \ | product([nico_images_tag]) | map('join', ':') | list\n   + ['bmc-mock:' ~ nico_images_bmc_mock_tag]\
+          \ }}"
+        description: 'Derived: every image reference (name:tag) that must be in the registry.'
+      nico_images_missing: &id015
         type: list
         elements: str
         required: false
-        description: Images to build for; empty skips the build. Default is all of nico_images_names.
+        description: 'Image references (name:tag) to build; empty skips the build. Default: all of nico_images_refs.
+          check.yml sets it.'
   check:
     short_description: Which NICo images are missing from the registry
     description:
-      - Looks up each image's manifest and sets nico_images_missing.
+      - Looks up each image reference in nico_images_refs and sets nico_images_missing.
     options:
-      <<: *nico_images_options
+      nico_images_repo: *id001
+      nico_images_version: *id002
+      nico_images_commit: *id003
+      nico_images_registry: *id004
+      nico_images_tag: *id005
+      nico_images_user: *id006
+      nico_images_src: *id007
+      nico_images_log_dir: *id008
+      nico_images_build_timeout: *id009
+      nico_images_make_images: *id010
+      nico_images_boot_artifacts: *id011
+      nico_images_bmc_mock_tag: *id012
+      nico_images_bmc_mock_src: *id013
+      nico_images_refs: *id014
+      nico_images_missing: *id015
       nico_images_ca_path:
         type: str
         required: false

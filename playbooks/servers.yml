@@ -16,4 +16,4 @@
         nico_server_gateway: "{{ nico_kvm_inband_subnet }}.1"
         nico_server_relay_address: "{{ nico_kvm_inband_subnet }}.2"
         nico_server_dhcp_server: "{{ nico_kvm_dhcp_vip }}"
-        nico_server_bmc_mock_image: "{{ nico_kvm_registry_repo }}/bmc-mock:{{ nico_kvm_nico_version }}"
+        nico_server_bmc_mock_image: "{{ nico_kvm_registry_repo }}/bmc-mock:{{ nico_kvm_nico_version }}-nico.1"

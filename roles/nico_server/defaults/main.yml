@@ -6,7 +6,7 @@
 
 # bmc-mock image (built by playbooks/images.yml); the binary is taken out of
 # it and run on the host, inside each BMC's network namespace.
-nico_server_bmc_mock_image: 192.168.91.1:5000/nico/bmc-mock:v2.3.0
+nico_server_bmc_mock_image: 192.168.91.1:5000/nico/bmc-mock:v2.3.0-nico.1
 nico_server_bmc_mock_bin: /usr/local/libexec/nico/bmc-mock
 
 # The HostInband network (omerfsen.nico.nico_network creates it).

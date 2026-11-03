@@ -73,8 +73,12 @@
   become_user: "{{ nico_images_user }}"
   changed_when: false
 
-# ── Build and push ───────────────────────────────────────────────────────
-- name: Build and push the images
+# ── Build and push only what is missing ──────────────────────────────────
+- name: What to build
+  ansible.builtin.set_fact:
+    nico_images_todo: "{{ nico_images_missing | default(nico_images_refs) }}"
+
+- name: Build and push the images make builds
   ansible.builtin.shell: |
     set -o pipefail
     source "$HOME/.cargo/env"
@@ -88,13 +92,13 @@
   become: true
   become_user: "{{ nico_images_user }}"
   loop:
-    - {target: images, arches: NICO_ARCHES=amd64}
-    - {target: images-boot-artifacts, arches: BOOT_ARTIFACTS_ARCHES=amd64}
+    - {target: images, arches: NICO_ARCHES=amd64, images: "{{ nico_images_make_images }}"}
+    - {target: images-boot-artifacts, arches: BOOT_ARTIFACTS_ARCHES=amd64, images: "{{ nico_images_boot_artifacts }}"}
   loop_control: {label: "make {{ item.target }}"}
+  when: item.images | product([nico_images_tag]) | map('join', ':') | intersect(nico_images_todo) | length > 0
   async: "{{ nico_images_build_timeout }}"
   poll: 60
   changed_when: true
-  when: nico_images_missing | default(nico_images_names) | length > 0
 
 # setup.sh deploys the Core image as <registry>/nvmetal-carbide; the
 # Makefile publishes it as <registry>/nico. Same manifest, second name.
@@ -106,7 +110,11 @@
   become: true
   become_user: "{{ nico_images_user }}"
   changed_when: true
-  when: nico_images_missing | default(nico_images_names) | length > 0
+  when: ('nvmetal-carbide:' ~ nico_images_tag) in nico_images_todo
+
+- name: Build and push bmc-mock with the lab's patches
+  ansible.builtin.include_tasks: bmc_mock.yml
+  when: ('bmc-mock:' ~ nico_images_bmc_mock_tag) in nico_images_todo
 
 - name: Every image is in the registry now
   ansible.builtin.include_tasks: check.yml
