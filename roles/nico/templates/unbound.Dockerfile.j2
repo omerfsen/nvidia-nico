@@ -1,0 +1,5 @@
+# {{ ansible_managed }}
+# unbound for NICo's unbound chart: a shell and the unbound binary.
+FROM {{ nico_unbound_base_image }}
+RUN apk add --no-cache {{ nico_unbound_package }} \
+ && mkdir -p /etc/unbound/local.conf.d

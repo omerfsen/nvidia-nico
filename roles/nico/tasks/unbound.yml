@@ -1,0 +1,36 @@
+---
+# NICo's unbound chart expects an internal NVIDIA image; build a small one
+# (Alpine + unbound) with Docker on this host and push it, once.
+
+- name: Is the unbound image in the registry?
+  ansible.builtin.uri:
+    url: "https://{{ nico_image_registry.split('/')[0] }}/v2/{{ (nico_unbound_image.split('/')[1:]) | join('/') }}/manifests/{{ nico_unbound_tag }}"
+    method: HEAD
+    ca_path: "{{ nico_registry_ca }}"
+    headers:
+      Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json
+    status_code: [200, 404]
+  register: nico_unbound_manifest
+
+- name: Build and push it
+  when: nico_unbound_manifest.status == 404
+  block:
+    - name: Build context
+      ansible.builtin.file:
+        path: "{{ nico_work }}/unbound"
+        state: directory
+        mode: "0755"
+
+    - name: Dockerfile
+      ansible.builtin.template:
+        src: unbound.Dockerfile.j2
+        dest: "{{ nico_work }}/unbound/Dockerfile"
+        mode: "0644"
+
+    - name: Docker build and push
+      ansible.builtin.shell: |
+        set -euo pipefail
+        docker build -q -t {{ nico_unbound_image }}:{{ nico_unbound_tag }} {{ nico_work }}/unbound
+        docker push -q {{ nico_unbound_image }}:{{ nico_unbound_tag }}
+      args: {executable: /bin/bash}
+      changed_when: true

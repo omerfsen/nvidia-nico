@@ -1,0 +1,18 @@
+---
+# NICo's control plane on the site cluster, from this host: needs
+# cluster.yml (the cluster and its kubeconfig) and images.yml (the images in
+# the lab registry) first.
+#
+#   ansible-playbook -i inventory/kvm omerfsen.nico.nico
+
+- name: NICo control plane
+  hosts: kvm_hosts
+  become: false
+  gather_facts: true
+  roles:
+    - role: omerfsen.nico.nico
+      vars:
+        nico_kubeconfig: "{{ nico_kvm_kubeconfig }}"
+        nico_image_registry: "{{ nico_kvm_registry_repo }}"
+        nico_version: "{{ nico_kvm_nico_version }}"
+        nico_registry_ca: "{{ nico_kvm_registry_ca }}"
