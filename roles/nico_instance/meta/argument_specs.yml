@@ -1,0 +1,82 @@
+---
+argument_specs:
+  main:
+    short_description: Have NICo provision an OS onto Ready servers
+    description:
+      - Tenant side through NICo's REST API (tenant account, instance type with the servers, allocation,
+        FLAT VPC), then through the in-cluster admin CLI the HostInband segment attached to the VPC, the
+        OS image (image-based install, /boot partition by UUID) and one instance per server with cloud-init
+        user data (hostname, SSH key); waits until each installed OS answers SSH. Every step is skipped
+        when its object exists.
+    options:
+      nico_instance_kubeconfig:
+        type: str
+        default: ~/.kube/nico-site.yaml
+        description: Kubeconfig.
+      nico_instance_namespace:
+        type: str
+        default: nico-system
+        description: Namespace.
+      nico_instance_nico_src:
+        type: str
+        default: ~/.cache/omerfsen-nico/infra-controller-v2.3.0
+        description: NICo's checkout on this host (keycloak/get-token.sh mints the REST token).
+      nico_instance_rest_url:
+        type: str
+        default: http://192.168.91.11:30388
+        description: REST API base (the nico-rest-api NodePort on a site node) and the org.
+      nico_instance_org:
+        type: str
+        default: ncx
+        description: Org.
+      nico_instance_site_name:
+        type: str
+        default: lab1
+        description: Site name.
+      nico_instance_type_name:
+        type: str
+        default: lab-vm
+        description: Type name.
+      nico_instance_allocation_name:
+        type: str
+        default: lab-alloc
+        description: Allocation name.
+      nico_instance_vpc_name:
+        type: str
+        default: flat-vpc-1
+        description: Vpc name.
+      nico_instance_segment_name:
+        type: str
+        default: lab-inband
+        description: The HostInband segment the instances' interfaces are on.
+      nico_instance_operator:
+        type: str
+        default: nico-lab
+        description: Name stamped on admin-CLI writes the REST side does not know about.
+      nico_instance_os:
+        type: dict
+        default:
+          name: ubuntu-24.04-20261017
+          url: http://192.168.91.1:8090/os/ubuntu-24.04-server-cloudimg-amd64-20261017.img
+          digest: 04e8f2461a16a44e78a370284471f29616cdd9baf1893df25807b71f985b6c94
+          boot_disk: /dev/vda
+          rootfs_label: cloudimg-rootfs
+          bootfs_id: b4f0deba-ce7d-45dc-9999-0427f2720320
+          efifs_id: 0E9D-3FD8
+        description: 'The OS NICo writes to each server''s disk (served by omerfsen.nico.nico_artifacts).
+          digest: plain hex sha256 (the imager picks the algorithm from the length; a "sha256:" prefix
+          breaks it). Ubuntu noble keeps /boot on a partition of its own, which the imager needs by UUID.'
+      nico_instance_instances:
+        type: list
+        default: []
+        description: Servers to provision, by their NICo machine name, and the hostname each installed
+          OS gets. Login user ubuntu with the key below.
+        elements: dict
+      nico_instance_ssh_key:
+        type: str
+        default: ~/.ssh/nico/instance_ed25519
+        description: Ssh key.
+      nico_instance_ssh_timeout:
+        type: int
+        default: 1800
+        description: 'Wait until each host answers SSH (0: do not wait).'

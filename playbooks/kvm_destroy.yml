@@ -1,8 +1,10 @@
 ---
-# Destroys the lab VMs (site cluster nodes and the build VM): the domains, their disks, cloud-init
-# seeds, NVRAM and TPM state, and their DHCP reservations. Base images, SSH
-# keys, the registry and the networks stay (-e nico_kvm_destroy_networks=true removes the
-# networks too). Needs -e nico_kvm_destroy_confirm=yes.
+# Destroys the lab VMs: the servers NICo manages (with their mock BMCs,
+# network namespaces and the DHCP relay), the site cluster nodes and the
+# build VM, with their disks, cloud-init seeds, NVRAM and TPM state and DHCP
+# reservations. Base images, SSH keys, the registry (with NICo's images), the
+# artifact server and the networks stay (-e nico_kvm_destroy_networks=true
+# removes the networks too). Needs -e nico_kvm_destroy_confirm=yes.
 #
 #   ansible-playbook -i inventory/kvm omerfsen.nico.kvm_destroy -e nico_kvm_destroy_confirm=yes
 
@@ -18,9 +20,50 @@
       ansible.builtin.assert:
         that: nico_kvm_destroy_confirm == 'yes'
         fail_msg: >-
-          This deletes {{ (nico_kvm_nodes + [nico_kvm_build_vm]) | map(attribute='name') | join(', ') }}
+          This deletes {{ (nico_kvm_servers + nico_kvm_nodes + [nico_kvm_build_vm]) | map(attribute='name') | join(', ') }}
           and their disks. Rerun with -e nico_kvm_destroy_confirm=yes.
         quiet: true
+
+    - name: Stop each server's mock BMC and its namespace
+      ansible.builtin.shell: |
+        set -uo pipefail
+        name={{ item.name | quote }}
+        for u in "nico-bmc@$name.service" "nico-netns@bmc-$name.service"; do
+          if systemctl is-enabled --quiet "$u" 2>/dev/null || systemctl is-active --quiet "$u"; then
+            systemctl disable --now "$u" >/dev/null 2>&1; echo removed
+          fi
+        done
+        for f in /etc/nico/bmc/$name.env /etc/nico/netns/bmc-$name.env /etc/nico/$name.xml; do
+          [ -e "$f" ] && rm -f "$f" && echo removed
+        done
+        [ -d /etc/nico/bmc/$name ] && rm -rf /etc/nico/bmc/$name && echo removed
+        exit 0
+      args: {executable: /bin/bash}
+      register: nico_kvm_bmc_removed
+      changed_when: "'removed' in nico_kvm_bmc_removed.stdout"
+      loop: "{{ nico_kvm_servers }}"
+      loop_control: {label: "{{ item.name }}"}
+
+    - name: Remove each server VM
+      ansible.builtin.include_tasks: tasks/remove_vm.yml
+      vars:
+        nico_kvm_remove_network: "{{ nico_kvm_inband_network }}"
+        nico_kvm_remove_vm: {name: "{{ item.name }}", ip: "", mac: "{{ '02:00:00:%02x:00:02' | format(item.index | int) }}"}
+      loop: "{{ nico_kvm_servers }}"
+      loop_control: {label: "{{ item.name }}"}
+
+    - name: Stop the DHCP relay and its namespace
+      ansible.builtin.shell: |
+        set -uo pipefail
+        for u in nico-dhcp-relay.service nico-netns@nico-relay.service; do
+          if systemctl is-enabled --quiet "$u" 2>/dev/null || systemctl is-active --quiet "$u"; then
+            systemctl disable --now "$u" >/dev/null 2>&1; echo removed
+          fi
+        done
+        exit 0
+      args: {executable: /bin/bash}
+      register: nico_kvm_relay_removed
+      changed_when: "'removed' in nico_kvm_relay_removed.stdout"
 
     - name: Remove each VM
       ansible.builtin.include_tasks: tasks/remove_vm.yml

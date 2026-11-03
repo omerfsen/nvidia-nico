@@ -25,3 +25,6 @@
 
 - name: Servers, registered with NICo
   ansible.builtin.import_playbook: servers.yml
+
+- name: An OS on the servers, by NICo
+  ansible.builtin.import_playbook: provision.yml
