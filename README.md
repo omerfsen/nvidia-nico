@@ -21,7 +21,7 @@ Status: networks and site cluster work; NICo itself is not installed yet.
 On the KVM host (Ubuntu 24.04 with libvirt, passwordless sudo):
 
 ```shell
-make dev            # on dragon: make dev PYTHON=/home/linuxbrew/.linuxbrew/opt/python@3.12/bin/python3.12
+make dev            # on the build machine: make dev PYTHON=/home/linuxbrew/.linuxbrew/opt/python@3.12/bin/python3.12
 source .venv/bin/activate
 ansible-playbook playbooks/kvm.yml          # networks, then the site cluster
 export KUBECONFIG=~/.kube/nico-site.yaml
