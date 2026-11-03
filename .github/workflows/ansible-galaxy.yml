@@ -1,0 +1,292 @@
+# Vendored from https://github.com/omerfsen/cicd (github/pipelines/ansible-galaxy/); edit it
+# there and re-run its install.sh. Settings for THIS repo live in
+# .github/cicd/config, which install.sh never overwrites.
+#
+# ansible-galaxy - checks and publishes the Ansible collection whose galaxy.yml
+# is at ANSIBLE_GALAXY_PATH.
+#   - Every run: install pinned ansible-core, ansible-lint and galaxy-importer,
+#     build the collection, install it with its galaxy.yml dependencies,
+#     ansible-lint (ANSIBLE_GALAXY_LINT_PROFILE), ansible-playbook
+#     --syntax-check on playbooks/*.yml, then galaxy-importer on the tarball,
+#     the same checks Galaxy runs on upload. Its errors fail the run (with
+#     ANSIBLE_GALAXY_IMPORTER_STRICT=true its warnings too); both go to the
+#     job summary. The tarball is kept as an artifact.
+#   - Push of a vX.Y.Z tag, ANSIBLE_GALAXY_PUBLISH=true: the tag must equal
+#     galaxy.yml's version; a version already on Galaxy is left alone;
+#     otherwise publish, in the ANSIBLE_GALAXY_ENVIRONMENT environment with
+#     its GALAXY_API_KEY secret, and wait until Galaxy serves that version.
+# Galaxy has no OIDC, so the key lives only in that environment, limited to
+# v* tags.
+#
+# Kill switch: ANSIBLE_GALAXY_ENABLED=false in .github/cicd/config.
+name: ansible-galaxy
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+  workflow_dispatch:
+
+# Nothing by default; each job asks for what it needs.
+permissions: {}
+
+concurrency:
+  group: ansible-galaxy-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # Reads this repo's settings from the BASE of a PR (or the pushed commit),
+  # never from the PR's own head, so a PR cannot switch off its own checks or
+  # change the settings it is checked with.
+  switch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      contents: read
+    outputs:
+      on: ${{ steps.s.outputs.on }}
+      runner: ${{ steps.s.outputs.runner }}
+      path: ${{ steps.s.outputs.path }}
+      python_version: ${{ steps.s.outputs.python_version }}
+      ansible_core_version: ${{ steps.s.outputs.ansible_core_version }}
+      ansible_lint_version: ${{ steps.s.outputs.ansible_lint_version }}
+      importer_version: ${{ steps.s.outputs.importer_version }}
+      lint_profile: ${{ steps.s.outputs.lint_profile }}
+      importer_strict: ${{ steps.s.outputs.importer_strict }}
+      publish: ${{ steps.s.outputs.publish }}
+      environment: ${{ steps.s.outputs.environment }}
+    steps:
+      - id: s
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.event.pull_request.base.sha || github.sha }}
+          # true for a PR from a fork: its code never runs on a self-hosted runner.
+          FORK: ${{ github.event.pull_request.head.repo.full_name != '' && github.event.pull_request.head.repo.full_name != github.repository }}
+        run: |
+          gh api "repos/$REPO/contents/.github/cicd/config?ref=$REF" --jq .content 2>/dev/null | base64 -d > "$RUNNER_TEMP/config" || true
+          conf() { sed -n "s/^$1=//p" "$RUNNER_TEMP/config" | tail -1 | tr -d '"'; }
+          if [ "$(conf ANSIBLE_GALAXY_ENABLED)" = "false" ]; then
+            echo "ANSIBLE_GALAXY_ENABLED is false in .github/cicd/config; nothing runs"; printf 'on=false\nrunner="ubuntu-24.04"\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Where the other jobs run: a runner label, or a JSON list of labels
+          # for a self-hosted runner. This job itself stays hosted, so a dead
+          # runner cannot stop it deciding. A fork PR always runs hosted.
+          runner() {  # runner <KEY>: the runs-on value, as JSON for fromJSON
+            local x j
+            x=$(sed -n "s/^$1=//p" "$RUNNER_TEMP/config" | tail -1)  # raw: a JSON list keeps its quotes
+            case "$x" in
+              "") j='"ubuntu-24.04"' ;;
+              \[*) j=$(jq -ce 'select(type == "array" and length > 0 and all(.[]; type == "string" and test("^[A-Za-z0-9._-]+$")))' <<<"$x" 2>/dev/null) || j= ;;
+              *) x=$(tr -d '"' <<<"$x"); if [[ $x =~ ^[A-Za-z0-9._-]+$ ]]; then j=$(jq -nc --arg l "$x" '$l'); else j=; fi ;;
+            esac
+            if [ -z "$j" ]; then echo "::error::$1 must be a runner label or a JSON list of labels, not '$x'" >&2; return 1; fi
+            if [ "$FORK" = true ] && [ "$j" != '"ubuntu-24.04"' ]; then
+              echo "::notice::A PR from a fork runs on ubuntu-24.04, whatever $1 says" >&2; j='"ubuntu-24.04"'
+            fi
+            echo "$j"
+          }
+          r=$(runner ANSIBLE_GALAXY_RUNNER) || { echo 'runner="ubuntu-24.04"' >> "$GITHUB_OUTPUT"; exit 1; }
+          echo "runner=$r" >> "$GITHUB_OUTPUT"
+          v() { local x; x=$(conf "$1"); echo "${x:-$2}"; }
+          bool() {  # bool <KEY> <default>: anything but true/false stops the run
+            local x; x=$(v "$1" "$2")
+            case "$x" in true|false) echo "$x" ;; *) echo "::error::$1 must be true or false, not '$x'" >&2; return 1 ;; esac
+          }
+          strict=$(bool ANSIBLE_GALAXY_IMPORTER_STRICT false) || exit 1
+          publish=$(bool ANSIBLE_GALAXY_PUBLISH true) || exit 1
+          profile=$(v ANSIBLE_GALAXY_LINT_PROFILE production)
+          case "$profile" in
+            min|basic|moderate|safety|shared|production) ;;
+            *) echo "::error::ANSIBLE_GALAXY_LINT_PROFILE must be an ansible-lint profile (min, basic, moderate, safety, shared, production), not '$profile'"; exit 1 ;;
+          esac
+          # Versions go into pip requirements as ==<version>; nothing else fits.
+          ver() {  # ver <KEY> <default>
+            local x; x=$(v "$1" "$2")
+            if [[ $x =~ ^[0-9]+(\.[0-9]+)*$ ]]; then echo "$x"; else echo "::error::$1 must be a version like $2, not '$x'" >&2; return 1; fi
+          }
+          python=$(ver ANSIBLE_GALAXY_PYTHON_VERSION 3.12) || exit 1
+          core=$(ver ANSIBLE_GALAXY_ANSIBLE_CORE_VERSION 2.20.10) || exit 1
+          lint=$(ver ANSIBLE_GALAXY_ANSIBLE_LINT_VERSION 26.10.1) || exit 1
+          importer=$(ver ANSIBLE_GALAXY_IMPORTER_VERSION 0.4.44) || exit 1
+          {
+            echo "on=true"
+            echo "path=$(v ANSIBLE_GALAXY_PATH .)"
+            echo "python_version=$python"
+            echo "ansible_core_version=$core"
+            echo "ansible_lint_version=$lint"
+            echo "importer_version=$importer"
+            echo "lint_profile=$profile"
+            echo "importer_strict=$strict"
+            echo "publish=$publish"
+            echo "environment=$(v ANSIBLE_GALAXY_ENVIRONMENT galaxy)"
+          } >> "$GITHUB_OUTPUT"
+
+  check:
+    needs: switch
+    if: needs.switch.outputs.on == 'true'
+    runs-on: ${{ fromJSON(needs.switch.outputs.runner) }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      tarball: ${{ steps.info.outputs.tarball }}
+    env:
+      DIR: ${{ needs.switch.outputs.path }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ needs.switch.outputs.python_version }}
+      # A venv on the PATH: galaxy-importer runs ansible-doc and ansible-lint
+      # only when it finds them there, and skips them silently otherwise.
+      - name: Install ansible-core, ansible-lint, galaxy-importer
+        env:
+          CORE: ${{ needs.switch.outputs.ansible_core_version }}
+          LINT: ${{ needs.switch.outputs.ansible_lint_version }}
+          IMPORTER: ${{ needs.switch.outputs.importer_version }}
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --disable-pip-version-check -q \
+            "ansible-core==$CORE" "ansible-lint==$LINT" "galaxy-importer==$IMPORTER"
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+          echo "ANSIBLE_COLLECTIONS_PATH=$RUNNER_TEMP/collections" >> "$GITHUB_ENV"
+      - id: info
+        run: |
+          set -euo pipefail
+          bash .github/cicd/ansible-galaxy/collection.sh info "$DIR" | tee -a "$GITHUB_OUTPUT"
+      - name: Build
+        env:
+          TARBALL: ${{ steps.info.outputs.tarball }}
+        run: |
+          set -euo pipefail
+          ansible-galaxy collection build "$DIR" --output-path "$RUNNER_TEMP/dist"
+          test -f "$RUNNER_TEMP/dist/$TARBALL"
+      # The built collection plus its galaxy.yml dependencies, so lint and the
+      # syntax check resolve the collection's own FQCNs.
+      - name: Install the collection and its dependencies
+        env:
+          TARBALL: ${{ steps.info.outputs.tarball }}
+        run: ansible-galaxy collection install "$RUNNER_TEMP/dist/$TARBALL" -p "$ANSIBLE_COLLECTIONS_PATH"
+      - name: ansible-lint
+        working-directory: ${{ needs.switch.outputs.path }}
+        env:
+          PROFILE: ${{ needs.switch.outputs.lint_profile }}
+        run: ansible-lint --profile "$PROFILE"
+      - name: Syntax check playbooks
+        working-directory: ${{ needs.switch.outputs.path }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          books=(playbooks/*.yml)
+          [ ${#books[@]} -gt 0 ] || { echo "no playbooks/*.yml"; exit 0; }
+          for p in "${books[@]}"; do ansible-playbook --syntax-check -i localhost, "$p"; done
+      # Away from the checkout: it writes importer_result.json to the cwd.
+      - name: galaxy-importer
+        working-directory: ${{ runner.temp }}
+        env:
+          TARBALL: ${{ steps.info.outputs.tarball }}
+          STRICT: ${{ needs.switch.outputs.importer_strict }}
+        run: |
+          set -uo pipefail
+          python -m galaxy_importer.main "dist/$TARBALL" > importer.log 2>&1; rc=$?
+          cat importer.log
+          mode=; [ "$STRICT" = true ] && mode=strict
+          bash "$GITHUB_WORKSPACE/.github/cicd/ansible-galaxy/collection.sh" importer $mode < importer.log >> "$GITHUB_STEP_SUMMARY"; vrc=$?
+          [ "$rc" -eq 0 ] || { echo "::error title=galaxy-importer::the importer exited $rc"; exit 1; }
+          [ "$vrc" -eq 0 ] || { echo "::error title=galaxy-importer::Galaxy would reject or flag this collection; see the job summary"; exit 1; }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: collection
+          path: ${{ runner.temp }}/dist/${{ steps.info.outputs.tarball }}
+          if-no-files-found: error
+          retention-days: 30
+
+  # Tags only: Galaxy versions are immutable, so main never publishes.
+  publish:
+    needs: [switch, check]
+    if: >-
+      needs.switch.outputs.publish == 'true' && github.event_name == 'push'
+      && startsWith(github.ref, 'refs/tags/v')
+    environment: ${{ needs.switch.outputs.environment }}
+    runs-on: ${{ fromJSON(needs.switch.outputs.runner) }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      DIR: ${{ needs.switch.outputs.path }}
+      TARBALL: ${{ needs.check.outputs.tarball }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: The tag is galaxy.yml's version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          bash .github/cicd/ansible-galaxy/collection.sh tag-matches "$TAG" "$DIR"
+          bash .github/cicd/ansible-galaxy/collection.sh info "$DIR" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: collection
+          path: ${{ runner.temp }}/dist
+      - name: Already on Galaxy?
+        id: there
+        run: |
+          set -euo pipefail
+          [ "$TARBALL" = "$tarball" ] || { echo "::error::built $TARBALL, but galaxy.yml says $tarball"; exit 1; }
+          url="https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/index/$namespace/$name/versions/$version/"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          code=$(curl -sS -o /dev/null -w '%{http_code}' "$url")
+          case "$code" in
+            200) echo "::notice::$namespace.$name $version is already on Galaxy; nothing to do"; echo "present=true" >> "$GITHUB_OUTPUT" ;;
+            404) echo "present=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::Galaxy answered $code for $url; not publishing blind"; exit 1 ;;
+          esac
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: steps.there.outputs.present == 'false'
+        with:
+          python-version: ${{ needs.switch.outputs.python_version }}
+      # The key goes in through ansible-galaxy's server config in the
+      # environment, never on a command line. --server names that entry, so
+      # an ansible.cfg in the repo cannot point the upload elsewhere.
+      - name: Publish
+        if: steps.there.outputs.present == 'false'
+        working-directory: ${{ runner.temp }}
+        env:
+          CORE: ${{ needs.switch.outputs.ansible_core_version }}
+          ENVIRONMENT: ${{ needs.switch.outputs.environment }}
+          ANSIBLE_GALAXY_SERVER_LIST: release_galaxy
+          ANSIBLE_GALAXY_SERVER_RELEASE_GALAXY_URL: https://galaxy.ansible.com/api/
+          ANSIBLE_GALAXY_SERVER_RELEASE_GALAXY_TOKEN: ${{ secrets.GALAXY_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$ANSIBLE_GALAXY_SERVER_RELEASE_GALAXY_TOKEN" ]; then
+            echo "::error title=No GALAXY_API_KEY::Add the secret GALAXY_API_KEY to the $ENVIRONMENT environment (see the pipeline README)."
+            exit 1
+          fi
+          python -m venv venv
+          venv/bin/pip install --disable-pip-version-check -q "ansible-core==$CORE"
+          venv/bin/ansible-galaxy collection publish "dist/$TARBALL" --server release_galaxy --import-timeout 600
+      # ansible-galaxy waits for the import; this waits until Galaxy serves it.
+      - name: Wait until Galaxy serves it
+        if: steps.there.outputs.present == 'false'
+        env:
+          URL: ${{ steps.there.outputs.url }}
+        run: |
+          set -euo pipefail
+          for _ in $(seq 60); do
+            if [ "$(curl -sS -o /dev/null -w '%{http_code}' "$URL" || true)" = 200 ]; then
+              echo "### published $namespace.$name $version to Galaxy" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::$namespace.$name $version is still not on Galaxy after 10 minutes"
+          exit 1
