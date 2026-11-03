@@ -322,3 +322,59 @@ images are missing.
 **Check:** `POST .../iDRAC.Embedded.1/Jobs` on `nico-server-01`'s BMC made
 job `JID_4297...` `Scheduled`; Redfish `On` started the VM and the job read
 `Completed`.
+
+## Step 11: NICo ingests the first server (2026-11-03)
+
+Role `nico_ingest` (second play of `playbooks/servers.yml`), from dragon:
+
+- **Admin pod.** NICo's API certificate names only cluster DNS names
+  (`api-lab1.nico.lab`, `nico-api.nico-system.svc.cluster.local`, ...), not
+  its VIP, and `nico-admin-cli` has no option to override the TLS name. So
+  the CLI runs in the cluster: Deployment `nico-lab-admin` with NICo's own
+  Core image (`/opt/carbide/nico-admin-cli`), and a client certificate from
+  NICo's Vault (`vault write nicoca/issue/nico-cli-client`, issued by
+  `site-root`, which nico-api accepts for admin calls), reissued when less
+  than two hours remain. Vault's own certificate has no IP SAN, so `vault`
+  calls inside the pod use `VAULT_ADDR=https://vault.vault.svc:8200`.
+- **Expected machine** per server: BMC MAC `02:00:00:01:00:01`, fixed BMC IP
+  `192.168.92.11`, chassis serial `020000010001`, user `root` /
+  `factory_password` (bmc-mock's factory account), `dpu_policy ignore`, DPF
+  off, interfaces `host_bmc` (fixed) and `host` `02:00:00:01:00:02`
+  (primary), both on the HostInband segment.
+
+What NICo did with `nico-server-01`, from the mock BMC's and nico-api's logs:
+
+1. Site explorer reached `192.168.92.11:443`, matched the expected machine
+   (vendor Dell), rotated the BMC root password to the site's, explored it.
+2. A ManagedHost with a predicted ID (`fm100p...`), then `DPUDiscovering`
+   (the zero-DPU path), `HostInitializing/PollingBiosSetup`: the Dell BIOS
+   job completed, thanks to the bmc-mock patch (step 9).
+3. `WaitingForDiscovery`: NICo powered the VM on through the BMC. Its DHCP
+   went through the relay (`192.168.92.2 -> 192.168.91.200`), Kea offered
+   `192.168.92.10` with an HTTP boot URL, OVMF's UEFI HTTP boot fetched
+   `ipxe.efi` from nico-pxe, iPXE asked `/api/v0/pxe/boot` and loaded
+   `scout.efi` and `scout.squashfs`.
+4. Scout called DiscoverMachine with the swtpm EK certificate; the ID became
+   the stable, TPM-derived `fm100htm66t3t4...`. No TPM CA had to be trusted:
+   with attestation off, an unknown EK CA only matters for measured boot.
+5. `WaitingForCleanup/HostCleanup`, discovery again, `WaitingForLockdown`,
+   `BomValidating` (off), machine validation, `Discovered`, **Ready** at
+   19:15, about 25 minutes after the expected machine was added (including
+   the two fixes below). Scout reported the real hardware: `QEMU`, `Ubuntu
+   24.04 PC (Q35 + ICH9, 2009)`, BIOS `2024.02-2ubuntu0.10`.
+
+**Failure 1:** UEFI HTTP boot got `404` for
+`/public/blobs/internal/x86_64/ipxe.efi`. The boot artifacts had never
+reached nico-pxe's volume (the wrong path in NICo's example, see step 10
+failure 3). **Fix:** copy to `/forge-boot-artifacts/blobs/internal/`.
+
+**Failure 2:** scout's loader failed: `LOADER: curl error: curl: (23)
+Failure writing output to destination`. It downloads the 1.9 GB
+`scout.squashfs` into `/run/scout-rootfs.squashfs`
+(`pxe/common_files/scout-loader-rclocal:25,154`), a tmpfs sized from RAM;
+with 8 GiB it does not fit. **Fix:** 16 GiB for server VMs (default in
+`nico_server` and the inventory); the existing VM was resized with
+`virsh setmaxmem/setmem --config` while off.
+
+Rerun of `servers.yml`: the first adopted the hand-made admin pod, the
+second `changed=0`.

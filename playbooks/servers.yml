@@ -1,6 +1,8 @@
 ---
 # The servers NICo manages: the HostInband DHCP relay, then per server a
-# blank-disk UEFI VM with a TPM (defined shut off) and its mock Redfish BMC.
+# blank-disk UEFI VM with a TPM (defined shut off) and its mock Redfish BMC;
+# then each server registered with NICo, waiting until NICo has it Ready.
+# Needs nico.yml (the control plane) first.
 #
 #   ansible-playbook -i inventory/kvm omerfsen.nico.servers
 
@@ -17,3 +19,14 @@
         nico_server_relay_address: "{{ nico_kvm_inband_subnet }}.2"
         nico_server_dhcp_server: "{{ nico_kvm_dhcp_vip }}"
         nico_server_bmc_mock_image: "{{ nico_kvm_registry_repo }}/bmc-mock:{{ nico_kvm_nico_version }}-nico.1"
+
+- name: Register the servers with NICo
+  hosts: kvm_hosts
+  become: false
+  gather_facts: false
+  roles:
+    - role: omerfsen.nico.nico_ingest
+      vars:
+        nico_ingest_kubeconfig: "{{ nico_kvm_kubeconfig }}"
+        nico_ingest_servers: "{{ nico_kvm_servers }}"
+        nico_ingest_image: "{{ nico_kvm_registry_repo }}/nvmetal-carbide:{{ nico_kvm_nico_version }}"

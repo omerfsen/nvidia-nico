@@ -1,0 +1,31 @@
+---
+# Hand the lab's servers to NICo: an admin pod in the site cluster that runs
+# nico-admin-cli with a client certificate from NICo's Vault (the API
+# certificate names only cluster DNS names, so the CLI runs in the cluster),
+# then each server registered as an expected machine, optionally waiting
+# until NICo has it Ready. Runs on the controller.
+
+nico_ingest_kubeconfig: ~/.kube/nico-site.yaml
+nico_ingest_namespace: nico-system
+# The admin pod's image: NICo's Core image carries /opt/carbide/nico-admin-cli.
+nico_ingest_image: 192.168.91.1:5000/nico/nvmetal-carbide:v2.3.0
+nico_ingest_api_url: https://nico-api.nico-system.svc.cluster.local:1079
+
+# Client certificate from Vault's nico-cli-client role (12 h at most);
+# reissued when less than nico_ingest_cert_min_hours remain.
+nico_ingest_cert_cn: lab-admin
+nico_ingest_cert_ttl: 12h
+nico_ingest_cert_min_hours: 2
+
+# Servers, as omerfsen.nico.nico_server describes them (name, index, bmc_ip).
+# The BMC MAC, host MAC and serial follow from the index (bmc-mock's Dell
+# R750 profile: BMC 02:00:00:NN:00:01, host 02:00:00:NN:00:02, serial
+# 0200000100NN).
+nico_ingest_servers: []
+# bmc-mock's factory account (it accepts any credentials without
+# --redfish-auth; NICo rotates the password to the site's BMC root).
+nico_ingest_bmc_username: root
+nico_ingest_bmc_password: factory_password
+
+# Wait until every server is Ready in NICo (0: do not wait).
+nico_ingest_ready_timeout: 1800

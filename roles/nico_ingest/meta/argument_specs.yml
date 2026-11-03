@@ -1,0 +1,60 @@
+---
+argument_specs:
+  main:
+    short_description: Register the lab servers with NICo and wait until Ready
+    description:
+      - Keeps an admin pod in the site cluster that runs nico-admin-cli with a client certificate from
+        NICo's Vault (nico-cli-client role, reissued near expiry), registers each server as an expected
+        machine (BMC MAC, fixed BMC IP, chassis serial and host NIC from the bmc-mock instance index;
+        DPU policy ignore), and waits until NICo reports every server Ready.
+    options:
+      nico_ingest_kubeconfig:
+        type: str
+        default: ~/.kube/nico-site.yaml
+        description: Kubeconfig.
+      nico_ingest_namespace:
+        type: str
+        default: nico-system
+        description: Namespace.
+      nico_ingest_image:
+        type: str
+        default: 192.168.91.1:5000/nico/nvmetal-carbide:v2.3.0
+        description: 'The admin pod''s image: NICo''s Core image carries /opt/carbide/nico-admin-cli.'
+      nico_ingest_api_url:
+        type: str
+        default: https://nico-api.nico-system.svc.cluster.local:1079
+        description: Api url.
+      nico_ingest_cert_cn:
+        type: str
+        default: lab-admin
+        description: Client certificate from Vault's nico-cli-client role (12 h at most); reissued when
+          less than nico_ingest_cert_min_hours remain.
+      nico_ingest_cert_ttl:
+        type: str
+        default: 12h
+        description: Cert ttl.
+      nico_ingest_cert_min_hours:
+        type: int
+        default: 2
+        description: Cert min hours.
+      nico_ingest_servers:
+        type: list
+        default: []
+        description: 'Servers, as omerfsen.nico.nico_server describes them (name, index, bmc_ip). The
+          BMC MAC, host MAC and serial follow from the index (bmc-mock''s Dell R750 profile: BMC 02:00:00:NN:00:01,
+          host 02:00:00:NN:00:02, serial 0200000100NN).'
+        elements: dict
+      nico_ingest_bmc_username:
+        type: str
+        default: root
+        description: bmc-mock's factory account (it accepts any credentials without --redfish-auth; NICo
+          rotates the password to the site's BMC root).
+      nico_ingest_bmc_password:
+        type: str
+        default: factory_password
+        description: Bmc password.
+        no_log: true
+      nico_ingest_ready_timeout:
+        type: int
+        default: 1800
+        description: 'Wait until every server is Ready in NICo (0: do not wait).'

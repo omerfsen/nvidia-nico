@@ -30,7 +30,9 @@ nico_server_dhcp_server: 192.168.91.200
 nico_server_servers: []
 nico_server_profile: dell_poweredge_r750
 nico_server_vcpus: 4
-nico_server_memory_mb: 8192
+# NICo's scout loads a 1.9 GB root squashfs into /run (a tmpfs sized from
+# RAM), so a server needs about 16 GiB to be discovered.
+nico_server_memory_mb: 16384
 nico_server_disk_gb: 60
 
 nico_server_disk_path: /var/lib/libvirt/images

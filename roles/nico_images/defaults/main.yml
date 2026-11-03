@@ -45,6 +45,14 @@ nico_images_boot_artifacts: [boot-artifacts-x86_64]
 nico_images_bmc_mock_tag: "{{ nico_images_tag }}-nico.1"
 nico_images_bmc_mock_src: "/home/{{ nico_images_user }}/infra-controller-bmc-mock"
 
+# A registry that already has this release's images (e.g. docker.io/omerfsen,
+# the lab's published copies): missing images are copied from there before
+# anything is built. Empty: always build.
+nico_images_seed_registry: ""
+# Names that differ in the seed registry.
+nico_images_seed_names:
+  nico: nvmetal-carbide
+
 # Derived: every image reference (name:tag) that must be in the registry.
 nico_images_refs: >-
   {{ (nico_images_make_images + nico_images_boot_artifacts + ['nvmetal-carbide'])
