@@ -33,6 +33,10 @@ On an Ubuntu 24.04 build host (the lab uses a throwaway VM, 16 vCPU,
   thing that completes pending Dell BIOS jobs, so NICo waits for its BIOS and
   UEFI password jobs forever. The patch raises it after an accepted power-on
   or restart when the backend asks for it (only libvirt does), as a real iDRAC
-  completes jobs when the host restarts.
+  completes jobs when the host restarts. Fixed upstream on `main` by
+  [#8229](https://github.com/dsx-ai-factory/infra-controller/pull/8229)
+  (commit `f503a8bf3`, 2026-10-28: the libvirt backend raises `PowerOn` on
+  every observed power-on), in no release yet (not v2.3.0, not the v2.4.0
+  release candidates). Drop this patch when moving to a release with it.
 
 Variables: see `meta/argument_specs.yml`.
