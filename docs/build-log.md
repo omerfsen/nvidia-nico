@@ -489,3 +489,59 @@ UEFI password and for lockdown, the last at 19:35:49, 20 seconds before
 Ready. Each boot got the same `192.168.92.13`: NICo's DHCP keeps the address
 it first allocated to a MAC. When QEMU starts a VFIO VM it shows `paused`
 briefly while it pins the memory; that is not an error.
+
+## Step 13: NICo installs Ubuntu onto a server (2026-11-03)
+
+The last piece of "NICo manages servers": an OS installed by NICo. Two new
+roles:
+
+- `nico_artifacts` (`playbooks/artifacts.yml`): nginx 1.31.7 (pinned by
+  digest) on `http://192.168.91.1:8090/`, serving checksum-verified files.
+  First file: the Ubuntu 24.04 cloud image, release 20261017.
+- `nico_instance` (`playbooks/provision.yml`): the tenant side through NICo's
+  REST API (token from NICo's Keycloak via `keycloak/get-token.sh`, base
+  `http://<site node>:30388/v2/org/ncx/nico`):
+  1. `GET service-account/current` creates the tenant account (with targeted
+     instance creation);
+  2. `POST instance/type` `lab-vm`, then the server added to it;
+  3. `POST allocation` reserving it (a VPC needs an allocation at the site);
+  4. `POST vpc` `flat-vpc-1`, `networkVirtualizationType: FLAT` (zero-DPU).
+
+  Then through the admin CLI: the HostInband segment attached to the VPC,
+  the OS image, and the instance on the chosen machine (`instance allocate
+  --flat-vpc-id ... --machine-id ... --os <json>`, with `--cloud-unsafe-op`,
+  since the REST side does not know about it). Why the admin CLI for these:
+  NICo's RBAC lets only the site agent create VPCs (so REST), but only the
+  admin CLI can give an OS image its `/boot` partition.
+
+The image: `--digest` is the plain hex sha256 (NICo's imager picks the hash
+from the digest's length; a `sha256:` prefix makes it fail), `--boot-disk
+/dev/vda`, `--rootfs-label cloudimg-rootfs`, and, because Ubuntu noble keeps
+`/boot` on partition 16, `--bootfs-id b4f0deba-...` and `--efifs-id
+0E9D-3FD8`, read from the image with `losetup -P` + `blkid`. The `--os`
+JSON: `{"variant":{"OsImageId":{"value":"<id>"}},"phone_home_enabled":false,
+"run_provisioning_instructions_on_every_boot":false,"user_data":"#cloud-config..."}`;
+phone home is off because its metadata service runs on a DPU.
+
+What happened on `nico-server-01` after the allocation, from the boot
+traffic and the artifact server's log:
+
+1. NICo restarted it; iPXE asked `/api/v0/pxe/boot` and got
+   `qcow-imager.efi` instead of scout.
+2. The imager downloaded the image (`GET /os/...img` 200, 621,284,352
+   bytes), wrote it to `/dev/vda`, fetched `user-data`, `meta-data` and
+   `network-config` from `/api/v0/cloud-init/tenant/` and rebooted.
+3. iPXE asked the boot API again and exited to the disk.
+4. About four minutes after the allocation: SSH as `ubuntu` with the
+   generated key into `nico-ubuntu-01`: Ubuntu 24.04.5 LTS, cloud-init
+   `done`, root grown to 59 GB, `/boot` on vda16, still `192.168.92.10` from
+   NICo's DHCP, internet reachable. NICo: instance `TenantState Ready`.
+
+**Failure:** the first run of the role failed at the first REST call with
+`Invalid header value`: `get-token.sh`'s output carries more than the token
+(the curl pod's own lines). **Fix:** take the line that looks like a JWT; the
+REST tasks are `no_log`, since the token is in their headers. Rerun against
+the provisioned lab: `changed=0`, SSH check passing.
+
+`kvm_destroy.yml` now also removes the servers (VMs, mock BMC units and
+namespaces) and the DHCP relay, keeping the registry and artifact server.

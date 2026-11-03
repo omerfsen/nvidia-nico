@@ -1,0 +1,13 @@
+---
+galaxy_info:
+  role_name: nico_instance
+  namespace: omerfsen
+  author: Omer Sen
+  description: Have NICo provision an OS (image-based) onto Ready servers, zero-DPU flat networking
+  license: Apache-2.0
+  min_ansible_version: "2.16"
+  platforms:
+    - name: Ubuntu
+      versions: [noble]
+  galaxy_tags: [nico, nvidia, provisioning, baremetal]
+dependencies: []

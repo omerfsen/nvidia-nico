@@ -1,0 +1,16 @@
+---
+# NICo provisions Ubuntu onto the lab's Ready servers. Needs servers.yml
+# (servers Ready in NICo) and artifacts.yml (the OS image served).
+#
+#   ansible-playbook -i inventory/kvm omerfsen.nico.provision
+
+- name: Provision the servers
+  hosts: kvm_hosts
+  become: false
+  gather_facts: false
+  roles:
+    - role: omerfsen.nico.nico_instance
+      vars:
+        nico_instance_kubeconfig: "{{ nico_kvm_kubeconfig }}"
+        nico_instance_rest_url: "http://{{ nico_kvm_nodes[0].ip }}:30388"
+        nico_instance_instances: "{{ nico_kvm_instances }}"

@@ -109,3 +109,9 @@ nico_kvm_servers: >-
         if nico_kvm_gpu_devices | length > 0 else []) }}
 # nico-dhcp's VIP, where the segment's DHCP relay sends requests.
 nico_kvm_dhcp_vip: "{{ nico_kvm_site_subnet }}.200"
+
+# Servers NICo provisions an OS onto (playbooks/provision.yml), by server
+# name, and the hostname each gets.
+nico_kvm_instances:
+  - server: nico-server-01
+    hostname: nico-ubuntu-01

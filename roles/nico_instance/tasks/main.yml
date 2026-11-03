@@ -1,0 +1,289 @@
+---
+- name: Settings
+  ansible.builtin.set_fact:
+    nico_instance_env:
+      KUBECONFIG: "{{ nico_instance_kubeconfig | expanduser }}"
+    nico_instance_cli: >-
+      kubectl -n {{ nico_instance_namespace }} exec deploy/nico-lab-admin --
+      /opt/carbide/nico-admin-cli
+    nico_instance_api: "{{ nico_instance_rest_url }}/v2/org/{{ nico_instance_org }}/nico"
+
+# ── REST token and tenant ────────────────────────────────────────────────
+- name: REST token from Keycloak
+  ansible.builtin.command: ./keycloak/get-token.sh
+  args:
+    chdir: "{{ nico_instance_nico_src | expanduser }}/helm-prereqs"
+  environment: "{{ nico_instance_env }}"
+  register: nico_instance_token
+  changed_when: false
+  no_log: true
+
+- name: Headers
+  ansible.builtin.set_fact:
+    nico_instance_headers:
+      # The script's output can carry other lines; take the JWT.
+      Authorization: "Bearer {{ nico_instance_token.stdout_lines | select('match', '^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$') | last }}"
+  no_log: true
+
+# The first call creates the tenant account (with targeted instance
+# creation); later calls return it.
+- name: Tenant account
+  ansible.builtin.uri:
+    url: "{{ nico_instance_api }}/service-account/current"
+    headers: "{{ nico_instance_headers }}"
+  register: nico_instance_sa
+  no_log: true  # the REST token is in the headers
+
+- name: Site
+  ansible.builtin.uri:
+    url: "{{ nico_instance_api }}/site"
+    headers: "{{ nico_instance_headers }}"
+  register: nico_instance_sites
+  no_log: true  # the REST token is in the headers
+
+- name: Tenant and site IDs
+  ansible.builtin.set_fact:
+    nico_instance_tenant_id: "{{ nico_instance_sa.json.tenantId }}"
+    nico_instance_site_id: "{{ (nico_instance_sites.json | selectattr('name', 'eq', nico_instance_site_name) | first).id }}"
+
+# ── Machines NICo has, by name ───────────────────────────────────────────
+- name: Machines
+  ansible.builtin.shell: |
+    set -o pipefail
+    {{ nico_instance_cli }} -f json machine show 2>/dev/null | grep -v IGNORING
+  args: {executable: /bin/bash}
+  environment: "{{ nico_instance_env }}"
+  register: nico_instance_machines
+  changed_when: false
+
+- name: Machine IDs and addresses of the servers to provision
+  ansible.builtin.set_fact:
+    nico_instance_targets: >-
+      {%- set out = [] -%}
+      {%- set machines = (nico_instance_machines.stdout | from_json).machines -%}
+      {%- for want in nico_instance_instances -%}
+      {%- set m = machines | selectattr('metadata.name', 'eq', want.server) | list -%}
+      {%- if m | length == 0 -%}{{ 0 / 0 }}{%- endif -%}
+      {%- set _ = out.append(want | combine({'machine_id': m[0].id})) -%}
+      {%- endfor -%}
+      {{ out }}
+
+# ── Instance type, allocation, VPC (REST) ────────────────────────────────
+- name: Instance types
+  ansible.builtin.uri:
+    url: "{{ nico_instance_api }}/instance/type"
+    headers: "{{ nico_instance_headers }}"
+  register: nico_instance_types
+  no_log: true  # the REST token is in the headers
+
+- name: Create the instance type
+  ansible.builtin.uri:
+    url: "{{ nico_instance_api }}/instance/type"
+    method: POST
+    headers: "{{ nico_instance_headers }}"
+    body_format: json
+    body: {name: "{{ nico_instance_type_name }}", siteId: "{{ nico_instance_site_id }}", description: "omerfsen.nico lab servers"}
+    status_code: 201
+  register: nico_instance_type_new
+  when: nico_instance_types.json | selectattr('name', 'eq', nico_instance_type_name) | list | length == 0
+  changed_when: true
+  no_log: true  # the REST token is in the headers
+
+- name: Instance type ID
+  ansible.builtin.set_fact:
+    nico_instance_type_id: >-
+      {{ nico_instance_type_new.json.id if nico_instance_type_new is changed
+         else (nico_instance_types.json | selectattr('name', 'eq', nico_instance_type_name) | first).id }}
+
+- name: Machines as REST sees them
+  ansible.builtin.uri:
+    url: "{{ nico_instance_api }}/machine"
+    headers: "{{ nico_instance_headers }}"
+  register: nico_instance_rest_machines
+  no_log: true  # the REST token is in the headers
+
+- name: Add the servers to the instance type
+  ansible.builtin.uri:
+    url: "{{ nico_instance_api }}/instance/type/{{ nico_instance_type_id }}/machine"
+    method: POST
+    headers: "{{ nico_instance_headers }}"
+    body_format: json
+    body: {machineIds: "{{ nico_instance_unassigned }}"}
+    status_code: 201
+  vars:
+    nico_instance_unassigned: >-
+      {{ nico_instance_targets | map(attribute='machine_id')
+         | difference(nico_instance_rest_machines.json | selectattr('instanceTypeId', 'eq', nico_instance_type_id) | map(attribute='id')) }}
+  when: nico_instance_unassigned | length > 0
+  changed_when: true
+  no_log: true  # the REST token is in the headers
+
+- name: Allocations
+  ansible.builtin.uri:
+    url: "{{ nico_instance_api }}/allocation"
+    headers: "{{ nico_instance_headers }}"
+  register: nico_instance_allocations
+
+# Created once, reserving as many servers as are listed now; listing more
+# later needs a larger allocation (not updated in place).
+  no_log: true  # the REST token is in the headers
+
+- name: Create the allocation
+  ansible.builtin.uri:
+    url: "{{ nico_instance_api }}/allocation"
+    method: POST
+    headers: "{{ nico_instance_headers }}"
+    body_format: json
+    body:
+      name: "{{ nico_instance_allocation_name }}"
+      tenantId: "{{ nico_instance_tenant_id }}"
+      siteId: "{{ nico_instance_site_id }}"
+      allocationConstraints:
+        - resourceType: InstanceType
+          resourceTypeId: "{{ nico_instance_type_id }}"
+          constraintType: Reserved
+          constraintValue: "{{ nico_instance_instances | length }}"
+    status_code: 201
+  when: nico_instance_allocations.json | selectattr('name', 'eq', nico_instance_allocation_name) | list | length == 0
+  changed_when: true
+  no_log: true  # the REST token is in the headers
+
+- name: VPCs
+  ansible.builtin.uri:
+    url: "{{ nico_instance_api }}/vpc"
+    headers: "{{ nico_instance_headers }}"
+  register: nico_instance_vpcs
+  no_log: true  # the REST token is in the headers
+
+- name: Create the FLAT VPC
+  ansible.builtin.uri:
+    url: "{{ nico_instance_api }}/vpc"
+    method: POST
+    headers: "{{ nico_instance_headers }}"
+    body_format: json
+    body: {name: "{{ nico_instance_vpc_name }}", siteId: "{{ nico_instance_site_id }}", networkVirtualizationType: FLAT}
+    status_code: 201
+  register: nico_instance_vpc_new
+  when: nico_instance_vpcs.json | selectattr('name', 'eq', nico_instance_vpc_name) | list | length == 0
+  changed_when: true
+  no_log: true  # the REST token is in the headers
+
+- name: VPC ID
+  ansible.builtin.set_fact:
+    nico_instance_vpc_id: >-
+      {{ nico_instance_vpc_new.json.id if nico_instance_vpc_new is changed
+         else (nico_instance_vpcs.json | selectattr('name', 'eq', nico_instance_vpc_name) | first).id }}
+
+# ── Segment, OS image, instances (admin CLI) ─────────────────────────────
+- name: Network segments
+  ansible.builtin.shell: |
+    set -o pipefail
+    {{ nico_instance_cli }} -f json network-segment show 2>/dev/null | grep -v IGNORING
+  args: {executable: /bin/bash}
+  environment: "{{ nico_instance_env }}"
+  register: nico_instance_segments
+  changed_when: false
+
+- name: Attach the HostInband segment to the VPC
+  ansible.builtin.command:
+    argv: "{{ (nico_instance_cli | split) + ['--cloud-unsafe-op=' ~ nico_instance_operator, 'network-segment', 'attach-vpc',
+           '--id', nico_instance_segment.id, '--vpc-id', nico_instance_vpc_id] }}"
+  vars:
+    nico_instance_segment: >-
+      {{ (nico_instance_segments.stdout | from_json).network_segments
+         | selectattr('metadata.name', 'eq', nico_instance_segment_name) | first }}
+  environment: "{{ nico_instance_env }}"
+  when: (nico_instance_segment.config.vpc_id | default('', true)) != nico_instance_vpc_id
+  changed_when: true
+
+- name: OS images
+  ansible.builtin.shell: |
+    set -o pipefail
+    {{ nico_instance_cli }} -f json os-image show 2>/dev/null | grep -v IGNORING
+  args: {executable: /bin/bash}
+  environment: "{{ nico_instance_env }}"
+  register: nico_instance_images
+  changed_when: false
+
+- name: The OS image's ID, if it exists
+  ansible.builtin.set_fact:
+    nico_instance_image_id: >-
+      {{ (nico_instance_images.stdout | from_json | map(attribute='attributes')
+          | selectattr('name', 'eq', nico_instance_os.name) | map(attribute='id.value') | first) | default('') }}
+
+- name: Register the OS image
+  when: nico_instance_image_id | length == 0
+  block:
+    - name: A new image ID
+      ansible.builtin.set_fact:
+        nico_instance_image_id: "{{ nico_instance_os.name | to_uuid }}"
+
+    - name: Create it
+      ansible.builtin.command:
+        argv: "{{ (nico_instance_cli | split) + ['os-image', 'create', '--id', nico_instance_image_id,
+               '--name', nico_instance_os.name, '--tenant-org-id', nico_instance_org,
+               '--url', nico_instance_os.url, '--digest', nico_instance_os.digest,
+               '--boot-disk', nico_instance_os.boot_disk, '--rootfs-label', nico_instance_os.rootfs_label,
+               '--bootfs-id', nico_instance_os.bootfs_id, '--efifs-id', nico_instance_os.efifs_id] }}"
+      environment: "{{ nico_instance_env }}"
+      changed_when: true
+
+- name: SSH key for the instances
+  ansible.builtin.command: ssh-keygen -q -t ed25519 -N '' -C nico-instance -f {{ nico_instance_ssh_key | expanduser }}
+  args:
+    creates: "{{ nico_instance_ssh_key | expanduser }}"
+
+- name: Read the public key
+  ansible.builtin.slurp:
+    src: "{{ nico_instance_ssh_key | expanduser }}.pub"
+  register: nico_instance_pubkey
+
+- name: Instances
+  ansible.builtin.shell: |
+    set -o pipefail
+    {{ nico_instance_cli }} -f json instance show 2>/dev/null | grep -v IGNORING
+  args: {executable: /bin/bash}
+  environment: "{{ nico_instance_env }}"
+  register: nico_instance_existing
+  changed_when: false
+
+# Phone home off: its metadata service runs on a DPU, which these hosts lack.
+- name: Allocate an instance on each server that has none
+  ansible.builtin.command:
+    argv: "{{ (nico_instance_cli | split) + ['--cloud-unsafe-op=' ~ nico_instance_operator, 'instance', 'allocate',
+           '--prefix-name', item.hostname, '--flat-vpc-id', nico_instance_vpc_id,
+           '--machine-id', item.machine_id, '--os', nico_instance_os_config | to_json] }}"
+  vars:
+    nico_instance_os_config:
+      variant: {OsImageId: {value: "{{ nico_instance_image_id }}"}}
+      phone_home_enabled: false
+      run_provisioning_instructions_on_every_boot: false
+      user_data: |
+        #cloud-config
+        hostname: {{ item.hostname }}
+        ssh_authorized_keys:
+          - {{ nico_instance_pubkey.content | b64decode | trim }}
+  environment: "{{ nico_instance_env }}"
+  loop: "{{ nico_instance_targets }}"
+  loop_control: {label: "{{ item.server }} -> {{ item.hostname }}"}
+  when: >-
+    item.machine_id not in ((nico_instance_existing.stdout | from_json).instances | default([]) | map(attribute='machine_id') | list)
+  changed_when: true
+
+# ── Wait for the installed OS ────────────────────────────────────────────
+- name: Each provisioned host answers SSH with its hostname
+  ansible.builtin.command: >-
+    ssh -i {{ nico_instance_ssh_key | expanduser }} -o BatchMode=yes -o ConnectTimeout=5
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ubuntu@{{ nico_instance_address }} hostname
+  vars:
+    nico_instance_machine: >-
+      {{ (nico_instance_machines.stdout | from_json).machines | selectattr('id', 'eq', item.machine_id) | first }}
+    nico_instance_address: "{{ (nico_instance_machine.status.interfaces | selectattr('primary_interface') | first).address[0] }}"
+  loop: "{{ nico_instance_targets }}"
+  loop_control: {label: "{{ item.hostname }}"}
+  register: nico_instance_ssh
+  changed_when: false
+  retries: "{{ (nico_instance_ssh_timeout | int / 20) | int }}"
+  delay: 20
+  until: nico_instance_ssh.rc == 0 and (nico_instance_ssh.stdout | trim) == item.hostname
+  when: nico_instance_ssh_timeout | int > 0
