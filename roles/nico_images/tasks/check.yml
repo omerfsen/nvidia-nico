@@ -1,0 +1,25 @@
+---
+# Which of nico_images_names are missing from the registry. Sets
+# nico_images_missing (a list). Runs anywhere that reaches the registry;
+# nico_images_ca_path is a CA file there that trusts it.
+
+- name: Look up each image's manifest
+  ansible.builtin.uri:
+    url: "https://{{ nico_images_registry.split('/')[0] }}/v2/{{ (nico_images_registry.split('/')[1:] + [item]) | join('/') }}/manifests/{{ nico_images_tag }}"
+    method: HEAD
+    ca_path: "{{ nico_images_ca_path | default(omit) }}"
+    headers:
+      Accept: >-
+        application/vnd.oci.image.index.v1+json,
+        application/vnd.docker.distribution.manifest.list.v2+json,
+        application/vnd.oci.image.manifest.v1+json,
+        application/vnd.docker.distribution.manifest.v2+json
+    status_code: [200, 404]
+  loop: "{{ nico_images_names }}"
+  register: nico_images_lookup
+  check_mode: false
+
+- name: Missing images
+  ansible.builtin.set_fact:
+    nico_images_missing: >-
+      {{ nico_images_lookup.results | selectattr('status', 'eq', 404) | map(attribute='item') | list }}

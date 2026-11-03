@@ -1,0 +1,25 @@
+# {{ ansible_managed }}
+[Unit]
+Description=NICo lab OCI registry on {{ nico_registry_host }}
+After=docker.service libvirtd.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Restart=always
+RestartSec=5
+# The site network's bridge carries the listen address; wait for it.
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 120); do ip -4 addr show dev {{ nico_registry_interface }} 2>/dev/null | grep -q " {{ nico_registry_address }}/" && exit 0; sleep 1; done; echo "no {{ nico_registry_address }} on {{ nico_registry_interface }}" >&2; exit 1'
+ExecStartPre=-/usr/bin/docker rm -f nico-registry
+ExecStart=/usr/bin/docker run --rm --name nico-registry --network host \
+  -v {{ nico_registry_data_dir }}:/var/lib/registry \
+  -v {{ nico_registry_pki_dir }}:/certs:ro \
+  -e REGISTRY_HTTP_ADDR={{ nico_registry_host }} \
+  -e REGISTRY_HTTP_TLS_CERTIFICATE=/certs/server.crt \
+  -e REGISTRY_HTTP_TLS_KEY=/certs/server.key \
+  -e REGISTRY_STORAGE_DELETE_ENABLED=true \
+  {{ nico_registry_image }}
+ExecStop=/usr/bin/docker stop nico-registry
+
+[Install]
+WantedBy=multi-user.target

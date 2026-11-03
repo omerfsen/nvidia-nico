@@ -1,0 +1,70 @@
+---
+argument_specs:
+  main:
+    short_description: Build NICo's images from source and push them
+    description:
+      - On an Ubuntu 24.04 build host that trusts the registry, checks out the
+        pinned NICo release, runs NICo's scripts/setup-build-host.sh once
+        (then reboots), runs make images and make images-boot-artifacts for
+        amd64, publishes the Core image also as nvmetal-carbide, and checks
+        every image is in the registry.
+      - Skips the build when nico_images_missing is empty.
+    options: &nico_images_options
+      nico_images_repo:
+        type: str
+        default: https://github.com/dsx-ai-factory/infra-controller.git
+        description: NICo source repository.
+      nico_images_version:
+        type: str
+        default: v2.3.0
+        description: Release tag to build.
+      nico_images_commit:
+        type: str
+        default: abc446b33dc773d9b8c7f41b54cccf812758b165
+        description: Commit the tag must point at.
+      nico_images_registry:
+        type: str
+        default: 192.168.91.1:5000/nico
+        description: Registry and path the images are pushed to.
+      nico_images_tag:
+        type: str
+        default: "{{ nico_images_version }}"
+        description: Image tag.
+      nico_images_user:
+        type: str
+        default: ubuntu
+        description: Build user (gets Docker group membership from the bootstrap).
+      nico_images_src:
+        type: str
+        default: "/home/{{ nico_images_user }}/infra-controller"
+        description: Checkout path.
+      nico_images_log_dir:
+        type: str
+        default: "/home/{{ nico_images_user }}/nico-build-logs"
+        description: Build logs (one per make target).
+      nico_images_build_timeout:
+        type: int
+        default: 21600
+        description: Upper bound for one make run, seconds.
+      nico_images_names:
+        type: list
+        elements: str
+        default: [nico, nico-rest-api, nico-rest-workflow, nico-rest-site-manager, nico-rest-site-agent,
+                  nico-rest-db, nico-rest-cert-manager, nico-flow, nico-psm, nico-nsm, nico-mcp,
+                  boot-artifacts-x86_64, nvmetal-carbide]
+        description: Every image that must end up in the registry.
+      nico_images_missing:
+        type: list
+        elements: str
+        required: false
+        description: Images to build for; empty skips the build. Default is all of nico_images_names.
+  check:
+    short_description: Which NICo images are missing from the registry
+    description:
+      - Looks up each image's manifest and sets nico_images_missing.
+    options:
+      <<: *nico_images_options
+      nico_images_ca_path:
+        type: str
+        required: false
+        description: CA file that trusts the registry.

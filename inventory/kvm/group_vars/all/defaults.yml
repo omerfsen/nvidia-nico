@@ -50,3 +50,24 @@ nico_kvm_nodes: >-
 
 # kubeconfig for the site cluster, written on this machine.
 nico_kvm_kubeconfig: ~/.kube/nico-site.yaml
+
+# The lab registry on this host (site network address), and where the NICo
+# images live in it.
+nico_kvm_registry_address: "{{ nico_kvm_site_gateway }}"
+nico_kvm_registry_port: 5000
+nico_kvm_registry_repo: "{{ nico_kvm_registry_address }}:{{ nico_kvm_registry_port }}/nico"
+nico_kvm_registry_ca: /etc/nico-registry/pki/ca.crt
+
+# NICo release whose images are built.
+nico_kvm_nico_version: v2.3.0
+
+# The throwaway VM the images are built on (NICo asks for 150 GB free disk).
+# Removed after a successful build unless nico_kvm_build_vm_keep is true.
+nico_kvm_build_vm:
+  name: nico-build
+  ip: "{{ nico_kvm_site_subnet }}.20"
+  mac: "52:54:00:91:00:14"
+  vcpus: 16
+  memory_mb: 32768
+  disk_gb: 200
+nico_kvm_build_vm_keep: false

@@ -38,6 +38,10 @@ argument_specs:
         type: str
         default: "{{ nico_cluster_kubernetes_version }}-{{ nico_cluster_kubernetes_package_revision }}"
         description: Derived; the package version string.
+      nico_cluster_cri_tools_package:
+        type: str
+        default: 1.36.0-1.1
+        description: cri-tools (crictl) package version from pkgs.k8s.io.
       nico_cluster_containerd_version:
         type: str
         default: 2.3.7

@@ -1,0 +1,68 @@
+---
+argument_specs:
+  main:
+    short_description: Private OCI registry with a lab CA on the KVM host
+    description:
+      - Makes a lab CA and a server certificate for the registry address
+        (openssl, once), runs CNCF distribution in a container from a systemd
+        unit with host networking, makes Docker on the host trust it, and
+        checks it answers over TLS. Sets nico_registry_ca_pem.
+    options: &nico_registry_options
+      nico_registry_image:
+        type: str
+        default: docker.io/library/registry:3.1.2@sha256:d4032d4cc323c1731c707931ecada07a53076eac38e3b61ae57533f170f2c6c3
+        description: Registry image, pinned by digest.
+      nico_registry_address:
+        type: str
+        default: 192.168.91.1
+        description: Address it listens on; must be on the host (nico_registry_interface).
+      nico_registry_port:
+        type: int
+        default: 5000
+        description: Port it listens on.
+      nico_registry_interface:
+        type: str
+        default: virbr-nicosite
+        description: Interface that carries nico_registry_address; the service waits for it.
+      nico_registry_data_dir:
+        type: str
+        default: /var/lib/nico-registry
+        description: Image storage on the host.
+      nico_registry_pki_dir:
+        type: str
+        default: /etc/nico-registry/pki
+        description: CA and server certificate and keys.
+      nico_registry_ca_days:
+        type: int
+        default: 3650
+        description: CA validity in days.
+      nico_registry_cert_days:
+        type: int
+        default: 825
+        description: Server certificate validity in days.
+      nico_registry_host:
+        type: str
+        default: "{{ nico_registry_address }}:{{ nico_registry_port }}"
+        description: Derived; host:port as image references use it.
+  trust:
+    short_description: Trust the lab registry on a machine
+    description:
+      - Adds the lab CA to the system store and to containerd (with a
+        hosts.toml) and Docker trust directories for the registry.
+    options:
+      nico_registry_ca_pem:
+        type: str
+        required: true
+        description: The lab CA certificate (PEM), as the main tasks set it.
+      nico_registry_address:
+        type: str
+        default: 192.168.91.1
+        description: Registry address.
+      nico_registry_port:
+        type: int
+        default: 5000
+        description: Registry port.
+      nico_registry_host:
+        type: str
+        default: "{{ nico_registry_address }}:{{ nico_registry_port }}"
+        description: Derived; host:port.

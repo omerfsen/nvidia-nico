@@ -1,0 +1,50 @@
+---
+# Make a machine trust the registry: containerd (hosts.toml) and Docker
+# (certs.d) where present, and the system CA store. Needs nico_registry_ca_pem
+# (set by the main tasks on the KVM host; pass it in).
+
+- name: The CA certificate is known
+  ansible.builtin.assert:
+    that: nico_registry_ca_pem | default('') is search('BEGIN CERTIFICATE')
+    fail_msg: Set nico_registry_ca_pem (the lab CA, from the registry's main tasks).
+    quiet: true
+
+- name: System CA store has the lab CA
+  ansible.builtin.copy:
+    dest: /usr/local/share/ca-certificates/nico-lab-registry.crt
+    content: "{{ nico_registry_ca_pem }}"
+    mode: "0644"
+  notify: Refresh the system CA bundle
+
+- name: Refresh a changed CA bundle now
+  ansible.builtin.meta: flush_handlers
+
+- name: Trust directories for containerd and Docker
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "/etc/containerd/certs.d/{{ nico_registry_host }}"
+    - "/etc/docker/certs.d/{{ nico_registry_host }}"
+
+- name: CA for containerd and Docker
+  ansible.builtin.copy:
+    dest: "{{ item }}/ca.crt"
+    content: "{{ nico_registry_ca_pem }}"
+    mode: "0644"
+  loop:
+    - "/etc/containerd/certs.d/{{ nico_registry_host }}"
+    - "/etc/docker/certs.d/{{ nico_registry_host }}"
+
+# containerd reads certs.d per pull: no restart needed.
+- name: Containerd hosts.toml for the registry
+  ansible.builtin.copy:
+    dest: "/etc/containerd/certs.d/{{ nico_registry_host }}/hosts.toml"
+    content: |
+      server = "https://{{ nico_registry_host }}"
+
+      [host."https://{{ nico_registry_host }}"]
+        capabilities = ["pull", "resolve", "push"]
+        ca = "/etc/containerd/certs.d/{{ nico_registry_host }}/ca.crt"
+    mode: "0644"
