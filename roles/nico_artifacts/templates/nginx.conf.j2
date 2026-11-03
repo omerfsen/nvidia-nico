@@ -1,0 +1,15 @@
+# {{ ansible_managed }}
+worker_processes auto;
+events { worker_connections 1024; }
+http {
+  sendfile on;
+  tcp_nopush on;
+  server_tokens off;
+  types { application/octet-stream img qcow2 raw iso efi squashfs; text/plain txt sha256; }
+  default_type application/octet-stream;
+  server {
+    listen {{ nico_artifacts_address }}:{{ nico_artifacts_port }};
+    root /srv;
+    autoindex on;
+  }
+}

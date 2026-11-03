@@ -1,0 +1,70 @@
+---
+- name: Directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ nico_artifacts_dir }}"
+    - /etc/nico-artifacts
+
+- name: Directory for each file
+  ansible.builtin.file:
+    path: "{{ (nico_artifacts_dir ~ '/' ~ item.path) | dirname }}"
+    state: directory
+    mode: "0755"
+  loop: "{{ nico_artifacts_files }}"
+  loop_control: {label: "{{ item.path }}"}
+
+- name: Files (checksum verified)
+  ansible.builtin.get_url:
+    url: "{{ item.url }}"
+    dest: "{{ nico_artifacts_dir }}/{{ item.path }}"
+    checksum: "sha256:{{ item.sha256 }}"
+    mode: "0644"
+    timeout: 300
+  loop: "{{ nico_artifacts_files }}"
+  loop_control: {label: "{{ item.path }}"}
+
+- name: A sha256 file next to each, for clients that check
+  ansible.builtin.copy:
+    dest: "{{ nico_artifacts_dir }}/{{ item.path }}.sha256"
+    content: "{{ item.sha256 }}  {{ item.path | basename }}\n"
+    mode: "0644"
+  loop: "{{ nico_artifacts_files }}"
+  loop_control: {label: "{{ item.path }}"}
+
+- name: Nginx configuration
+  ansible.builtin.template:
+    src: nginx.conf.j2
+    dest: /etc/nico-artifacts/nginx.conf
+    mode: "0644"
+  notify: Restart nico-artifacts
+
+- name: Artifact server unit
+  ansible.builtin.template:
+    src: nico-artifacts.service.j2
+    dest: /etc/systemd/system/nico-artifacts.service
+    mode: "0644"
+  notify: Restart nico-artifacts
+
+- name: Artifact server enabled and running
+  ansible.builtin.systemd_service:
+    name: nico-artifacts.service
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Apply a changed configuration now
+  ansible.builtin.meta: flush_handlers
+
+- name: Each file is served
+  ansible.builtin.uri:
+    url: "{{ nico_artifacts_base_url }}/{{ item.path }}"
+    method: HEAD
+  loop: "{{ nico_artifacts_files }}"
+  loop_control: {label: "{{ item.path }}"}
+  register: nico_artifacts_head
+  retries: 15
+  delay: 2
+  until: nico_artifacts_head.status == 200

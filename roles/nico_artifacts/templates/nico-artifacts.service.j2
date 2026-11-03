@@ -1,0 +1,20 @@
+# {{ ansible_managed }}
+[Unit]
+Description=NICo lab artifact server on {{ nico_artifacts_address }}:{{ nico_artifacts_port }}
+After=docker.service libvirtd.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Restart=always
+RestartSec=5
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 120); do ip -4 addr show dev {{ nico_artifacts_interface }} 2>/dev/null | grep -q " {{ nico_artifacts_address }}/" && exit 0; sleep 1; done; echo "no {{ nico_artifacts_address }} on {{ nico_artifacts_interface }}" >&2; exit 1'
+ExecStartPre=-/usr/bin/docker rm -f nico-artifacts
+ExecStart=/usr/bin/docker run --rm --name nico-artifacts --network host \
+  -v {{ nico_artifacts_dir }}:/srv:ro \
+  -v /etc/nico-artifacts/nginx.conf:/etc/nginx/nginx.conf:ro \
+  {{ nico_artifacts_image }}
+ExecStop=/usr/bin/docker stop nico-artifacts
+
+[Install]
+WantedBy=multi-user.target
