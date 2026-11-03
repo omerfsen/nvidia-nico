@@ -8,7 +8,7 @@ PYTHON ?= python3
 
 help:
 	@echo "  make dev           venv + dependencies + this repo linked as omerfsen.nico"
-	@echo "                     (on dragon: make dev PYTHON=/home/linuxbrew/.linuxbrew/opt/python@3.12/bin/python3.12)"
+	@echo "                     (on the build machine: make dev PYTHON=/home/linuxbrew/.linuxbrew/opt/python@3.12/bin/python3.12)"
 	@echo "  make lint          ansible-lint (production profile) and playbook syntax"
 	@echo "  make kvm           the whole lab on KVM: networks, then the NICo site cluster"
 	@echo "  make cluster       only the NICo site cluster (VMs + kubeadm + Calico)"
