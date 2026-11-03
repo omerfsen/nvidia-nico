@@ -1,0 +1,28 @@
+# {{ ansible_managed }}
+apiVersion: operator.tigera.io/v1
+kind: Installation
+metadata:
+  name: default
+spec:
+  calicoNetwork:
+    ipPools:
+      # The operator fills in allowedUses, assignmentMode and
+      # disableNewAllocations, and ipPools is replaced as a whole on apply:
+      # spelled out here with the operator's defaults so a rerun sees no diff.
+      - name: default-ipv4-ippool
+        allowedUses: [Workload, Tunnel]
+        assignmentMode: Automatic
+        blockSize: 26
+        cidr: {{ nico_cluster_pod_cidr }}
+        disableBGPExport: false
+        disableNewAllocations: false
+        encapsulation: VXLANCrossSubnet
+        natOutgoing: Enabled
+        nodeSelector: all()
+---
+# The Calico API server: Calico's tiers wait for it (tigerastatus "tiers").
+apiVersion: operator.tigera.io/v1
+kind: APIServer
+metadata:
+  name: default
+spec: {}

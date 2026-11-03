@@ -1,0 +1,11 @@
+---
+- name: Has this node joined?
+  ansible.builtin.stat:
+    path: /etc/kubernetes/kubelet.conf
+  register: nico_cluster_kubelet_conf
+
+- name: Run kubeadm join
+  ansible.builtin.command: "{{ hostvars[nico_cluster_control_plane].nico_cluster_join_command.stdout }}"
+  when: not nico_cluster_kubelet_conf.stat.exists
+  changed_when: true
+  no_log: true

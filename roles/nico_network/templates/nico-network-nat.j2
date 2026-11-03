@@ -1,0 +1,15 @@
+#!/bin/bash
+# {{ ansible_managed }}
+# Masquerade the NICo lab networks to the internet: add|del, idempotent.
+# iptables masks the host bits, so address/prefix names the whole network.
+set -euo pipefail
+action=${1:-add}
+uplink={{ nico_network_uplink_interface | quote }}
+for net in {{ nico_network_networks | map(attribute='address') | zip(nico_network_networks | map(attribute='prefix')) | map('join', '/') | join(' ') }}; do
+  rule=(POSTROUTING -s "$net" -o "$uplink" -j MASQUERADE)
+  if [ "$action" = add ]; then
+    iptables -t nat -C "${rule[@]}" 2>/dev/null || iptables -t nat -A "${rule[@]}"
+  else
+    while iptables -t nat -C "${rule[@]}" 2>/dev/null; do iptables -t nat -D "${rule[@]}"; done
+  fi
+done

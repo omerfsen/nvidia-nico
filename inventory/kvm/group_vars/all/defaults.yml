@@ -1,0 +1,52 @@
+---
+# Defaults for the KVM lab. Override in local.yml next to this file
+# (gitignored, loaded after this one): with a group_vars/all/ directory
+# Ansible ignores a group_vars/all.yml file.
+
+# The site network: cluster nodes, MetalLB VIPs and the lab registry.
+nico_kvm_site_network: nico-site
+nico_kvm_site_subnet: 192.168.91
+nico_kvm_site_gateway: "{{ nico_kvm_site_subnet }}.1"
+
+# The HostInband network: the "servers" NICo manages (host NICs and their
+# mock BMCs). No libvirt DHCP: NICo's DHCP answers through a relay on the
+# host.
+nico_kvm_inband_network: nico-inband
+nico_kvm_inband_subnet: 192.168.92
+
+nico_kvm_networks:
+  - name: "{{ nico_kvm_site_network }}"
+    bridge: virbr-nicosite
+    address: "{{ nico_kvm_site_gateway }}"
+    prefix: 24
+    # libvirt DHCP hands out reservations (the nodes) and this range; the
+    # MetalLB pool (.200-.250) stays outside it.
+    dhcp_start: "{{ nico_kvm_site_subnet }}.150"
+    dhcp_end: "{{ nico_kvm_site_subnet }}.199"
+  - name: "{{ nico_kvm_inband_network }}"
+    bridge: virbr-nicoib
+    address: "{{ nico_kvm_inband_subnet }}.1"
+    prefix: 24
+
+nico_kvm_disk_path: /var/lib/libvirt/images
+nico_kvm_ssh_key_dir: ~/.ssh/nico
+
+# Site cluster: three Ubuntu 24.04 VMs, all schedulable (NICo needs three
+# for HA Vault and PostgreSQL). The first one is the control plane.
+nico_kvm_node_names: [nico-node-01, nico-node-02, nico-node-03]
+nico_kvm_node_first_octet: 11
+nico_kvm_node_size: {vcpus: 6, memory_mb: 12288, disk_gb: 80}
+
+# Every site cluster VM: name, ip, mac.
+nico_kvm_nodes: >-
+  {%- set vms = [] -%}
+  {%- for name in nico_kvm_node_names -%}
+  {%- set octet = nico_kvm_node_first_octet + loop.index0 -%}
+  {%- set _ = vms.append({'name': name,
+                          'ip': nico_kvm_site_subnet ~ '.' ~ octet,
+                          'mac': '52:54:00:91:00:%02x' | format(octet)}) -%}
+  {%- endfor -%}
+  {{ vms }}
+
+# kubeconfig for the site cluster, written on this machine.
+nico_kvm_kubeconfig: ~/.kube/nico-site.yaml

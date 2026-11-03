@@ -1,0 +1,5 @@
+---
+# omerfsen.nvke provides the libvirt_vm role the lab VMs are created with.
+collections:
+  - name: omerfsen.nvke
+    version: 0.2.0

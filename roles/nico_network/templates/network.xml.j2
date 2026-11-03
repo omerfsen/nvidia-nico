@@ -1,0 +1,13 @@
+<!-- {{ ansible_managed }} -->
+<network>
+  <name>{{ nico_network_item.name }}</name>
+  <forward mode='route'/>
+  <bridge name='{{ nico_network_item.bridge }}' stp='on' delay='0'/>
+  <ip address='{{ nico_network_item.address }}' prefix='{{ nico_network_item.prefix }}'>
+{% if nico_network_item.dhcp_start is defined %}
+    <dhcp>
+      <range start='{{ nico_network_item.dhcp_start }}' end='{{ nico_network_item.dhcp_end }}'/>
+    </dhcp>
+{% endif %}
+  </ip>
+</network>
