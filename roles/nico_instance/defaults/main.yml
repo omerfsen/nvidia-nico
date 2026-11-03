@@ -57,3 +57,6 @@ nico_instance_ssh_key: ~/.ssh/nico/instance_ed25519
 
 # Wait until each host answers SSH (0: do not wait).
 nico_instance_ssh_timeout: 1800
+# Wait until NICo's REST API sees each server Ready (it syncs from the site
+# and can lag the admin CLI right after ingestion).
+nico_instance_rest_ready_timeout: 600

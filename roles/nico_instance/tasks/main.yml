@@ -95,11 +95,26 @@
       {{ nico_instance_type_new.json.id if nico_instance_type_new is changed
          else (nico_instance_types.json | selectattr('name', 'eq', nico_instance_type_name) | first).id }}
 
-- name: Machines as REST sees them
+# REST keeps its own copy of the machines, synced from the site, so it can
+# lag the admin CLI: right after ingestion a server can be missing there or
+# not Ready yet, and adding it to the instance type then fails (404/400).
+# Wait until each server is in the instance type already or Ready in REST.
+- name: Machines as REST sees them (each server known and Ready)
   ansible.builtin.uri:
     url: "{{ nico_instance_api }}/machine"
     headers: "{{ nico_instance_headers }}"
   register: nico_instance_rest_machines
+  retries: "{{ (nico_instance_rest_ready_timeout | int / 15) | int }}"
+  delay: 15
+  until: >-
+    nico_instance_rest_machines.json is defined
+    and (nico_instance_targets | map(attribute='machine_id')
+         | difference(nico_instance_rest_machines.json
+                      | selectattr('instanceTypeId', 'defined')
+                      | selectattr('instanceTypeId', 'eq', nico_instance_type_id) | map(attribute='id'))
+         | difference(nico_instance_rest_machines.json
+                      | selectattr('status', 'in', ['Ready', 'Reset']) | map(attribute='id'))
+         | length == 0)
   no_log: true  # the REST token is in the headers
 
 - name: Add the servers to the instance type

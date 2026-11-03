@@ -655,3 +655,19 @@ inventory and commands. Tested exactly as written there, on `nico-rocky-02`
 as a single control plane: `omerfsen.stratum` 0.1.0 from Galaxy, Stratum
 v1.37.1-stratum.0, node `Ready` (Kubernetes 1.37.1, containerd 2.4.2, SELinux
 enforcing), 11 system pods running, rerun `changed=0`.
+
+## Step 17: From scratch again, and a race in provisioning (2026-11-03)
+
+A from-scratch rebuild of `main` (with Rocky support and the fixes of step
+15) went through networks, registry, artifacts, site cluster, images, NICo
+and ingestion with no intervention, then failed at "Add the servers to the
+instance type" (output hidden by `no_log`). A rerun a minute later passed
+that task and provisioned both servers.
+
+**Cause:** NICo's REST API keeps its own copy of the machines, synced from the
+site, and rejects adding a machine it does not know yet (404) or that is not
+`Ready` in that copy (400, `machineinstancetype.go`). `servers.yml` waits for
+Ready through the admin CLI, which sees it first; right after ingestion REST
+can still lag. **Fix:** "Machines as REST sees them" waits (up to
+`nico_instance_rest_ready_timeout`, 600 s) until every server is in the
+instance type already or `Ready` in REST.
