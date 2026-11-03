@@ -1,0 +1,8 @@
+repo https://github.com/omerfsen/cicd
+ref v0.6.0
+commit 997cab5bf5c901b123bda69e744071fd9e5604dd
+file 6849b6f210030c13b7e606d782bebd4087038444f2f2f995e10d9054f07d2c1a .github/workflows/release-please.yml
+file d39858aa5b5626b36885dc0c33b1792ba2dbfeaf919fde76d12dad0736b02329 .github/cicd/release-please/check-release-pr.sh
+file f50d5d105dc5c306b7d7e97cc4450c2a740c1b568ff886c72d2a7358fb319326 .github/workflows/pr-title.yml
+file b218fa5e8a0b94418e5d0626223307dad62b2af236b1bfde0d1522b455331d24 .github/workflows/ansible-galaxy.yml
+file 5121376da14c6554c0f7ad2907c2665b250001a7fb2bf75621f634a11f18a440 .github/cicd/ansible-galaxy/collection.sh
