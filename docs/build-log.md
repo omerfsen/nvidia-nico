@@ -278,9 +278,14 @@ GiB allocatable per lab node. **Fix:** `nico_vault_resources` (requests
 limit 4 GiB) in the Core values.
 
 **Failure 3:** at the same time `nico-pxe`'s init container crash-looped:
-`cp: can't create directory '/boot-artifacts/blobs/internal'`. The
-`bootArtifactContainers` command in NICo's own example values copies into a
-directory nobody creates. **Fix:** `mkdir -p` before the copy.
+`cp: can't create directory '/boot-artifacts/blobs/internal'`. A first fix
+(`mkdir -p` before the copy) only made the error go away: the copy then
+landed in the init container's own filesystem. Found later, when the first
+server's UEFI HTTP boot got `404` for `/public/blobs/internal/x86_64/ipxe.efi`.
+The chart mounts the volume at `/forge-boot-artifacts/blobs/internal` in
+both containers (`helm/charts/nico-pxe/templates/deployment.yaml:58,126`);
+the `bootArtifactContainers` example in NICo's `values/nico-core.yaml` still
+uses the old path. **Fix:** `cp -r /x86_64 /forge-boot-artifacts/blobs/internal/`.
 
 **Failure 4:** with memory fixed, `nico-api` crash-looped at startup:
 `no rows returned by a query that expected to return at least one row ...
