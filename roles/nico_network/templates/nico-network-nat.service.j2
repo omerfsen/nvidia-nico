@@ -1,0 +1,14 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Masquerade the NICo lab libvirt networks to the internet
+After=network-online.target libvirtd.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/nico-network-nat add
+ExecStop=/usr/local/sbin/nico-network-nat del
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,87 @@
+---
+- name: Is the cluster initialised?
+  ansible.builtin.stat:
+    path: /etc/kubernetes/admin.conf
+  register: nico_cluster_admin_conf
+
+- name: Kubeadm configuration
+  ansible.builtin.template:
+    src: kubeadm-config.yaml.j2
+    dest: /etc/kubernetes/nico-kubeadm.yaml
+    mode: "0600"
+
+# Init runs once. A changed configuration afterwards is not re-applied:
+# kubeadm has no in-place reconfigure for these settings.
+- name: Run kubeadm init
+  ansible.builtin.command: kubeadm init --config /etc/kubernetes/nico-kubeadm.yaml
+  when: not nico_cluster_admin_conf.stat.exists
+  changed_when: true
+
+- name: Manifest directory
+  ansible.builtin.file:
+    path: /etc/kubernetes/nico
+    state: directory
+    mode: "0755"
+
+- name: Download the Tigera operator manifest (checksum verified)
+  ansible.builtin.get_url:
+    url: "https://raw.githubusercontent.com/projectcalico/calico/v{{ nico_cluster_calico_version }}/manifests/tigera-operator.yaml"
+    dest: /etc/kubernetes/nico/tigera-operator.yaml
+    checksum: "sha256:{{ nico_cluster_calico_operator_sha256 }}"
+    mode: "0644"
+    timeout: 120
+
+- name: Calico Installation
+  ansible.builtin.template:
+    src: calico-installation.yaml.j2
+    dest: /etc/kubernetes/nico/calico-installation.yaml
+    mode: "0644"
+
+# Server-side apply only when kubectl diff sees a difference, so a rerun
+# reports no change. The operator manifest's CRDs are too large for a
+# client-side apply annotation.
+- name: Apply the operator, then the Installation
+  ansible.builtin.shell: |
+    set -uo pipefail
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    f=/etc/kubernetes/nico/{{ item }}
+    kubectl diff --server-side --force-conflicts -f "$f" >/dev/null 2>&1
+    rc=$?
+    case $rc in
+      0) exit 0 ;;
+      1) kubectl apply --server-side --force-conflicts -f "$f" >/dev/null && echo applied ;;
+      *) # diff failed (e.g. the CRDs are not served yet): apply anyway
+         kubectl apply --server-side --force-conflicts -f "$f" >/dev/null && echo applied ;;
+    esac
+  args: {executable: /bin/bash}
+  register: nico_cluster_calico_apply
+  changed_when: "'applied' in nico_cluster_calico_apply.stdout"
+  loop: [tigera-operator.yaml, calico-installation.yaml]
+  retries: 5
+  delay: 10
+  until: nico_cluster_calico_apply is succeeded
+
+- name: Wait for Calico to be available
+  ansible.builtin.command: >-
+    kubectl --kubeconfig /etc/kubernetes/admin.conf wait --for=condition=Available
+    tigerastatus/calico --timeout=30s
+  register: nico_cluster_calico_ready
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: nico_cluster_calico_ready.rc == 0
+
+- name: Which nodes have joined?
+  ansible.builtin.command: kubectl --kubeconfig /etc/kubernetes/admin.conf get nodes -o name
+  register: nico_cluster_joined
+  changed_when: false
+
+- name: A join command for the nodes that have not joined
+  ansible.builtin.command: kubeadm token create --ttl 30m --print-join-command
+  register: nico_cluster_join_command
+  changed_when: true
+  no_log: true
+  when: >-
+    ansible_play_hosts_all | reject('eq', inventory_hostname)
+    | map('extract', hostvars, 'ansible_facts') | map(attribute='hostname')
+    | map('regex_replace', '^', 'node/') | difference(nico_cluster_joined.stdout_lines) | length > 0

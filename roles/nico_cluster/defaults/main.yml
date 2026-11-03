@@ -1,0 +1,51 @@
+---
+# A kubeadm cluster for NICo's control plane on Ubuntu 24.04: containerd and
+# runc from their GitHub releases, kubeadm/kubelet/kubectl from pkgs.k8s.io,
+# Calico through the Tigera operator. Every node is schedulable (NICo needs
+# three for HA Vault and PostgreSQL), the first one is the control plane.
+# Every version and checksum is pinned.
+
+# The control plane: the first host of the play unless set.
+nico_cluster_control_plane: "{{ ansible_play_hosts_all | first }}"
+# This node's address; the API server and kubelet use it.
+nico_cluster_node_ip: "{{ ansible_host }}"
+
+nico_cluster_kubernetes_version: 1.36.5
+# The pkgs.k8s.io package revision for that version.
+nico_cluster_kubernetes_package_revision: "1.1"
+# pkgs.k8s.io signing key, checked by fingerprint (the key file itself is
+# re-signed when its expiry moves, so its checksum is not stable).
+nico_cluster_kubernetes_key_fingerprint: DE15B14486CD377B9E876E1A234654DA9A296436
+
+nico_cluster_containerd_version: 2.3.7
+nico_cluster_containerd_sha256: 09a1b669ac6d21e7e24c3c33a9805b48987ba5845e8d88f039c47013a0c0025c
+# containerd v2.3.7 pins runc v1.5.2 (script/setup/runc-version).
+nico_cluster_runc_version: 1.5.2
+nico_cluster_runc_sha256: 599f6f94ff8c5057241eff0d54c3c74f95c34935b6457b33fe545defc61e9488
+
+nico_cluster_calico_version: 3.32.2
+nico_cluster_calico_operator_sha256: 4e372754e4e1c3a61cf7c0ceb9bc9fff2f78aa6575dcadcb5ea4e716bb00dffa
+
+# Pod and service ranges. Calico's default 192.168.0.0/16 would overlap the
+# lab's libvirt networks.
+nico_cluster_pod_cidr: 10.244.0.0/16
+nico_cluster_service_cidr: 10.96.0.0/12
+
+# Node settings NICo asks for (bridge-nf-call-iptables, ip_forward), plus
+# inotify limits for a node running many pods.
+nico_cluster_sysctls:
+  net.bridge.bridge-nf-call-iptables: 1
+  net.bridge.bridge-nf-call-ip6tables: 1
+  net.ipv4.ip_forward: 1
+  fs.inotify.max_user_instances: 8192
+  fs.inotify.max_user_watches: 524288
+
+# Where the admin kubeconfig is copied on the controller. Empty: not copied.
+nico_cluster_kubeconfig: ""
+
+# Where downloads are kept on the nodes.
+nico_cluster_cache_dir: /var/cache/nico-cluster
+
+# Derived: the minor (repository path) and the package version string.
+nico_cluster_kubernetes_minor: "{{ nico_cluster_kubernetes_version.split('.')[:2] | join('.') }}"
+nico_cluster_kubernetes_package: "{{ nico_cluster_kubernetes_version }}-{{ nico_cluster_kubernetes_package_revision }}"

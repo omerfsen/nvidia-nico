@@ -1,0 +1,178 @@
+---
+- name: Ubuntu 24.04
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.distribution == 'Ubuntu'
+      - ansible_facts.distribution_version == '24.04'
+    fail_msg: "nico_cluster supports Ubuntu 24.04 only, not {{ ansible_facts.distribution }} {{ ansible_facts.distribution_version }}."
+    quiet: true
+
+- name: No swap
+  ansible.builtin.command: swapon --show --noheadings
+  register: nico_cluster_swap
+  changed_when: false
+  failed_when: nico_cluster_swap.stdout | length > 0
+
+# ── Kernel modules and sysctls ───────────────────────────────────────────
+- name: Load overlay and br_netfilter at boot
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/nico-cluster.conf
+    content: "overlay\nbr_netfilter\n"
+    mode: "0644"
+
+- name: Load overlay and br_netfilter now
+  ansible.builtin.shell: |
+    set -euo pipefail
+    for m in overlay br_netfilter; do
+      if ! grep -q "^$m " /proc/modules; then modprobe "$m"; echo "$m"; fi
+    done
+  args: {executable: /bin/bash}
+  register: nico_cluster_modprobe
+  changed_when: nico_cluster_modprobe.stdout | length > 0
+
+- name: Sysctls
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/90-nico-cluster.conf
+    content: |
+      {% for key, value in nico_cluster_sysctls.items() %}
+      {{ key }} = {{ value }}
+      {% endfor %}
+    mode: "0644"
+  notify: Apply sysctls
+
+- name: Apply changed sysctls now
+  ansible.builtin.meta: flush_handlers
+
+# ── containerd and runc ──────────────────────────────────────────────────
+- name: Download directory
+  ansible.builtin.file:
+    path: "{{ nico_cluster_cache_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Download containerd (checksum verified)
+  vars:
+    nico_cluster_containerd_tarball: "containerd-{{ nico_cluster_containerd_version }}-linux-amd64.tar.gz"
+  ansible.builtin.get_url:
+    url: "https://github.com/containerd/containerd/releases/download/v{{ nico_cluster_containerd_version }}/{{ nico_cluster_containerd_tarball }}"
+    dest: "{{ nico_cluster_cache_dir }}/{{ nico_cluster_containerd_tarball }}"
+    checksum: "sha256:{{ nico_cluster_containerd_sha256 }}"
+    mode: "0644"
+    timeout: 120
+
+- name: Installed containerd version
+  ansible.builtin.command: /usr/local/bin/containerd --version
+  register: nico_cluster_containerd_installed
+  changed_when: false
+  failed_when: false
+
+- name: Install containerd into /usr/local
+  vars:
+    nico_cluster_containerd_tarball: "containerd-{{ nico_cluster_containerd_version }}-linux-amd64.tar.gz"
+  ansible.builtin.unarchive:
+    src: "{{ nico_cluster_cache_dir }}/{{ nico_cluster_containerd_tarball }}"
+    dest: /usr/local
+    remote_src: true
+  when: >-
+    ('v' ~ nico_cluster_containerd_version ~ ' ')
+    not in (nico_cluster_containerd_installed.stdout | default('') ~ ' ')
+  notify: Restart containerd
+
+- name: Install runc (checksum verified)
+  ansible.builtin.get_url:
+    url: "https://github.com/opencontainers/runc/releases/download/v{{ nico_cluster_runc_version }}/runc.amd64"
+    dest: /usr/local/sbin/runc
+    checksum: "sha256:{{ nico_cluster_runc_sha256 }}"
+    mode: "0755"
+    timeout: 120
+  notify: Restart containerd
+
+- name: Directory for containerd registry settings
+  ansible.builtin.file:
+    path: /etc/containerd/certs.d
+    state: directory
+    mode: "0755"
+
+- name: Configuration for containerd
+  ansible.builtin.template:
+    src: containerd-config.toml.j2
+    dest: /etc/containerd/config.toml
+    mode: "0644"
+  notify: Restart containerd
+
+- name: Containerd unit (upstream's)
+  ansible.builtin.copy:
+    src: containerd.service
+    dest: /etc/systemd/system/containerd.service
+    mode: "0644"
+  notify: Restart containerd
+
+- name: Containerd enabled and running
+  ansible.builtin.systemd_service:
+    name: containerd.service
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Restart a changed containerd now
+  ansible.builtin.meta: flush_handlers
+
+# ── Kubernetes packages from pkgs.k8s.io ─────────────────────────────────
+- name: Keyring directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: Signing key of pkgs.k8s.io
+  ansible.builtin.get_url:
+    url: "https://pkgs.k8s.io/core:/stable:/v{{ nico_cluster_kubernetes_minor }}/deb/Release.key"
+    dest: "/etc/apt/keyrings/kubernetes-v{{ nico_cluster_kubernetes_minor }}.asc"
+    mode: "0644"
+    timeout: 60
+
+- name: The key has the pinned fingerprint
+  ansible.builtin.shell: |
+    set -o pipefail
+    gpg --show-keys --with-colons /etc/apt/keyrings/kubernetes-v{{ nico_cluster_kubernetes_minor }}.asc | awk -F: '$1 == "fpr" {print $10; exit}'
+  args: {executable: /bin/bash}
+  register: nico_cluster_key_fpr
+  changed_when: false
+  failed_when: nico_cluster_key_fpr.stdout | trim != nico_cluster_kubernetes_key_fingerprint
+
+- name: Repository pkgs.k8s.io
+  ansible.builtin.deb822_repository:
+    name: kubernetes
+    types: [deb]
+    uris: "https://pkgs.k8s.io/core:/stable:/v{{ nico_cluster_kubernetes_minor }}/deb/"
+    suites: [/]
+    signed_by: "/etc/apt/keyrings/kubernetes-v{{ nico_cluster_kubernetes_minor }}.asc"
+  register: nico_cluster_repo
+
+- name: Kubeadm, kubelet and kubectl at the pinned version
+  ansible.builtin.apt:
+    name:
+      - "kubeadm={{ nico_cluster_kubernetes_package }}"
+      - "kubelet={{ nico_cluster_kubernetes_package }}"
+      - "kubectl={{ nico_cluster_kubernetes_package }}"
+    update_cache: "{{ nico_cluster_repo is changed }}"
+    cache_valid_time: 3600
+    allow_change_held_packages: true
+    lock_timeout: 600
+
+- name: Hold them at that version
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop: [kubeadm, kubelet, kubectl]
+
+- name: Point crictl at containerd
+  ansible.builtin.copy:
+    dest: /etc/crictl.yaml
+    content: "runtime-endpoint: unix:///run/containerd/containerd.sock\nimage-endpoint: unix:///run/containerd/containerd.sock\n"
+    mode: "0644"
+
+- name: Kubelet enabled
+  ansible.builtin.systemd_service:
+    name: kubelet.service
+    enabled: true

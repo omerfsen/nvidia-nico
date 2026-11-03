@@ -1,0 +1,77 @@
+---
+# Destroys the lab VMs in nico_kvm_nodes: the domains, their disks, cloud-init
+# seeds, NVRAM and TPM state, and their DHCP reservations. Base images, SSH
+# keys and the networks stay (-e nico_kvm_destroy_networks=true removes the
+# networks too). Needs -e nico_kvm_destroy_confirm=yes.
+#
+#   ansible-playbook -i inventory/kvm omerfsen.nico.kvm_destroy -e nico_kvm_destroy_confirm=yes
+
+- name: Destroy the NICo lab VMs
+  hosts: kvm_hosts
+  become: true
+  gather_facts: false
+  vars:
+    nico_kvm_destroy_confirm: ""
+    nico_kvm_destroy_networks: false
+  tasks:
+    - name: Confirmed
+      ansible.builtin.assert:
+        that: nico_kvm_destroy_confirm == 'yes'
+        fail_msg: "This deletes {{ nico_kvm_nodes | map(attribute='name') | join(', ') }} and their disks. Rerun with -e nico_kvm_destroy_confirm=yes."
+        quiet: true
+
+    - name: Remove each VM
+      ansible.builtin.shell: |
+        set -euo pipefail
+        name={{ item.name | quote }}
+        if virsh dominfo "$name" >/dev/null 2>&1; then
+          virsh destroy "$name" >/dev/null 2>&1 || true
+          virsh undefine "$name" --nvram --tpm >/dev/null
+          echo removed
+        fi
+        for f in {{ (nico_kvm_disk_path ~ '/' ~ item.name) | quote }}.qcow2 {{ (nico_kvm_disk_path ~ '/' ~ item.name) | quote }}-seed.iso; do
+          if [ -e "$f" ]; then rm -f "$f"; echo removed; fi
+        done
+        net={{ nico_kvm_site_network | quote }}
+        entry="<host mac='{{ item.mac }}' name='$name' ip='{{ item.ip }}'/>"
+        if virsh net-dumpxml "$net" 2>/dev/null | grep -qF "<host mac='{{ item.mac }}'"; then
+          virsh net-update "$net" delete ip-dhcp-host "$entry" --live --config >/dev/null
+          echo removed
+        fi
+      args: {executable: /bin/bash}
+      register: nico_kvm_destroyed
+      changed_when: "'removed' in nico_kvm_destroyed.stdout"
+      loop: "{{ nico_kvm_nodes }}"
+      loop_control: {label: "{{ item.name }}"}
+
+    - name: Remove the networks and their masquerade
+      when: nico_kvm_destroy_networks | bool
+      block:
+        - name: Stop and disable the masquerade
+          ansible.builtin.systemd_service:
+            name: nico-network-nat.service
+            state: stopped
+            enabled: false
+          failed_when: false
+
+        - name: Remove each network
+          ansible.builtin.shell: |
+            set -euo pipefail
+            name={{ item.name | quote }}
+            if virsh net-info "$name" >/dev/null 2>&1; then
+              virsh net-destroy "$name" >/dev/null 2>&1 || true
+              virsh net-undefine "$name" >/dev/null
+              echo removed
+            fi
+          args: {executable: /bin/bash}
+          register: nico_kvm_net_destroyed
+          changed_when: "'removed' in nico_kvm_net_destroyed.stdout"
+          loop: "{{ nico_kvm_networks }}"
+          loop_control: {label: "{{ item.name }}"}
+
+    - name: Forget the kubeconfig
+      ansible.builtin.file:
+        path: "{{ nico_kvm_kubeconfig | expanduser }}"
+        state: absent
+      delegate_to: localhost
+      become: false

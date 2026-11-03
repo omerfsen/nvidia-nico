@@ -1,0 +1,24 @@
+# {{ ansible_managed }}
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: InitConfiguration
+localAPIEndpoint:
+  advertiseAddress: {{ nico_cluster_node_ip }}
+nodeRegistration:
+  criSocket: unix:///run/containerd/containerd.sock
+  # No control-plane taint: NICo needs three schedulable nodes.
+  taints: []
+  kubeletExtraArgs:
+    - name: node-ip
+      value: {{ nico_cluster_node_ip }}
+---
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: ClusterConfiguration
+kubernetesVersion: v{{ nico_cluster_kubernetes_version }}
+controlPlaneEndpoint: {{ nico_cluster_node_ip }}:6443
+networking:
+  podSubnet: {{ nico_cluster_pod_cidr }}
+  serviceSubnet: {{ nico_cluster_service_cidr }}
+---
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+cgroupDriver: systemd

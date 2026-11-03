@@ -1,0 +1,14 @@
+---
+# The lab's libvirt networks on the KVM host: the site network (cluster
+# nodes, service VIPs) and the HostInband network (the servers NICo manages).
+#
+#   ansible-playbook -i inventory/kvm omerfsen.nico.network
+
+- name: Libvirt networks
+  hosts: kvm_hosts
+  become: true
+  gather_facts: true
+  roles:
+    - role: omerfsen.nico.nico_network
+      vars:
+        nico_network_networks: "{{ nico_kvm_networks }}"

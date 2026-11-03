@@ -1,0 +1,26 @@
+---
+argument_specs:
+  main:
+    short_description: libvirt networks in route mode with internet masquerade
+    description:
+      - Defines, autostarts and starts each libvirt network in route mode, then
+        masquerades each network's traffic on the uplink through a systemd unit
+        (nico-network-nat.service), so VMs reach the internet and each other.
+      - Runs on the KVM host as root. An existing network is never redefined.
+    options:
+      nico_network_networks:
+        type: list
+        elements: dict
+        default: []
+        description:
+          - Each network as name, bridge (15 characters at most), address (the
+            host's address, also the gateway), prefix, and optional dhcp_start
+            and dhcp_end for libvirt DHCP.
+      nico_network_uplink:
+        type: str
+        default: ""
+        description: Interface to masquerade on. Empty uses the default IPv4 route's interface.
+      nico_network_config_dir:
+        type: str
+        default: /etc/libvirt/nico
+        description: Where the network definitions are written on the host.

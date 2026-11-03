@@ -1,0 +1,60 @@
+---
+# The NICo site cluster: three Ubuntu 24.04 VMs on the site network, then
+# kubeadm and Calico on them. The kubeconfig lands in nico_kvm_kubeconfig.
+#
+#   ansible-playbook -i inventory/kvm omerfsen.nico.cluster
+
+- name: Site cluster VMs
+  hosts: kvm_hosts
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Create each node VM
+      ansible.builtin.include_role:
+        name: omerfsen.nvke.libvirt_vm
+      vars:
+        libvirt_vm_name: "{{ nico_kvm_vm.name }}"
+        libvirt_vm_ip: "{{ nico_kvm_vm.ip }}"
+        libvirt_vm_mac: "{{ nico_kvm_vm.mac }}"
+        libvirt_vm_vcpus: "{{ nico_kvm_node_size.vcpus }}"
+        libvirt_vm_memory_mb: "{{ nico_kvm_node_size.memory_mb }}"
+        libvirt_vm_disk_gb: "{{ nico_kvm_node_size.disk_gb }}"
+        libvirt_vm_network: "{{ nico_kvm_site_network }}"
+        libvirt_vm_addressing: dhcp
+        libvirt_vm_disk_path: "{{ nico_kvm_disk_path }}"
+        libvirt_vm_ssh_key_dir: "{{ nico_kvm_ssh_key_dir }}"
+      loop: "{{ nico_kvm_nodes }}"
+      loop_control: {loop_var: nico_kvm_vm, label: "{{ nico_kvm_vm.name }}"}
+
+    - name: Add the nodes to nico_nodes
+      ansible.builtin.add_host:
+        name: "{{ item.name }}"
+        groups: [nico_nodes]
+        ansible_host: "{{ item.ip }}"
+        ansible_user: ubuntu
+        ansible_ssh_private_key_file: "{{ nico_kvm_ssh_key_dir | expanduser }}/{{ item.name }}_ed25519"
+        ansible_python_interpreter: /usr/bin/python3
+      loop: "{{ nico_kvm_nodes }}"
+      loop_control: {label: "{{ item.name }}"}
+      changed_when: false
+
+- name: Kubernetes on the nodes
+  hosts: nico_nodes
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Wait until cloud-init has finished
+      ansible.builtin.command: cloud-init status --wait
+      register: nico_kvm_cloud_init
+      changed_when: false
+      # 2: finished with recoverable errors or warnings.
+      failed_when: nico_kvm_cloud_init.rc not in [0, 2]
+
+    - name: Gather facts
+      ansible.builtin.setup:
+
+    - name: Kubeadm cluster with Calico
+      ansible.builtin.include_role:
+        name: omerfsen.nico.nico_cluster
+      vars:
+        nico_cluster_kubeconfig: "{{ nico_kvm_kubeconfig }}"
