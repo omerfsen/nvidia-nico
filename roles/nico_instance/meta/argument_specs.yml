@@ -57,9 +57,9 @@ argument_specs:
         type: list
         elements: dict
         description: 'The OS images NICo can write to a server''s disk (served by omerfsen.nico.nico_artifacts):
-          name, url, digest (plain hex sha256), boot_disk, rootfs_label, bootfs_id, efifs_id, user (the
-          image''s cloud-init default user) and runcmd (extra first-boot commands). Each instance picks one
-          by name; the first is the default. Defaults: Ubuntu 24.04 and Rocky Linux 10.2.'
+          name, url, digest (plain hex sha256), boot_disk, rootfs_label, bootfs_id, efifs_id and user (the
+          image''s cloud-init default user). Each instance picks one by name; the first is the default.
+          Defaults: Ubuntu 24.04 and Rocky Linux 10.2.'
       nico_instance_instances:
         type: list
         default: []

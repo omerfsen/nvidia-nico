@@ -262,10 +262,13 @@
            '--prefix-name', item.hostname, '--flat-vpc-id', nico_instance_vpc_id,
            '--machine-id', item.machine_id, '--os', nico_instance_os_config | to_json] }}"
   vars:
-    nico_instance_cloud_config: >-
-      {{ {'hostname': item.hostname,
-          'ssh_authorized_keys': [nico_instance_pubkey.content | b64decode | trim]}
-         | combine({'runcmd': item.image.runcmd} if item.image.runcmd | default([]) | length > 0 else {}) }}
+    # prefer_fqdn_over_hostname: RHEL-family cloud-init otherwise names the
+    # host after NICo's DNS name for its address, not the hostname here.
+    nico_instance_cloud_config:
+      hostname: "{{ item.hostname }}"
+      prefer_fqdn_over_hostname: false
+      ssh_authorized_keys:
+        - "{{ nico_instance_pubkey.content | b64decode | trim }}"
     nico_instance_os_config:
       variant: {OsImageId: {value: "{{ nico_instance_image_ids[item.image.name] }}"}}
       phone_home_enabled: false

@@ -11,16 +11,17 @@ install), for a zero-DPU site with flat networking:
    label, and the `/boot` and EFI partitions by UUID: Ubuntu noble and Rocky
    Linux 10 keep `/boot` separate, which the REST API cannot express), and
    one instance per server, with the OS it names (`os`), cloud-init user
-   data (hostname, SSH key, the image's extra first-boot commands) and
-   phone-home off (its metadata service runs on a DPU).
+   data (hostname, SSH key) and phone-home off (its metadata service runs on a DPU).
 3. Waits until each installed OS answers SSH as the image's user (`ubuntu`,
    `rocky`) with its hostname.
 
 Images: Ubuntu 24.04 (`ubuntu-24.04-20261017`, the default) and Rocky Linux
-10.2 (`rocky-10.2-20260525`). Rocky's image logs the kernel to the serial
-port only; its first boot adds `console=tty0`, so a server with a GPU shows
-later boots on the GPU's display. NICo's imager handles both: it finds the
-shim on the ESP and, on a RHEL-family image, runs `grub2-mkconfig` (BLS).
+10.2 (`rocky-10.2-20260525`). NICo's imager handles both: it finds the shim
+on the ESP and, on a RHEL-family image, runs `grub2-mkconfig` (BLS); it also
+adds `console=tty0`, so a server with a GPU shows its boot on the GPU's
+display. The user data sets `prefer_fqdn_over_hostname: false`: cloud-init on
+Rocky otherwise names the host after NICo's DNS name for its address
+(`192-168-92-13.lab1.nico.lab`) instead of the hostname asked for.
 
 NICo then restarts the server, iPXE chains `qcow-imager.efi`, which
 downloads the image, writes it to the disk, seeds cloud-init and reboots

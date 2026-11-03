@@ -576,3 +576,41 @@ configured). `nico-ubuntu-02` boots on the RTX 4080's own screen and `lspci`
 inside it shows `NVIDIA AD103 [GeForce RTX 4080 SUPER]`.
 
 Lesson: test a role on a fresh lab, not only against state a manual run left.
+
+## Step 15: Rocky Linux 10.2 next to Ubuntu (2026-11-03)
+
+Goal: NICo installs two different operating systems, Ubuntu 24.04 on
+`nico-server-01` and Rocky Linux 10.2 on the GPU server `nico-server-02`, so
+Rocky's boot shows on the GPU's display.
+
+**Image:** Rocky's official GenericCloud Base image, build 20260525.0 (qcow2,
+10 GiB virtual), pinned by the sha256 from Rocky's `CHECKSUM` file and served
+by the artifact server. Its layout fits NICo's imager: a GPT disk with the ESP
+(vfat `D779-42D2`, shim at `EFI/rocky/shimx64.efi`), `/boot` on xfs of its
+own (`ac0faa30-…`) and root xfs labelled `rocky`. The imager's RHEL path does
+the rest: it finds the shim on the ESP for the EFI boot entry, runs
+`grub2-mkconfig --update-bls-cmdline` in the image, and adds `console=tty0`
+next to the image's serial console.
+
+**Role:** `nico_instance_os` became `nico_instance_os_images`, a list of
+images with each image's login user (`ubuntu`, `rocky`); each instance names
+its image (`os`) and the SSH check logs in as that user.
+
+**Changing a provisioned server's OS:** release its instance
+(`instance release --machine <id>`). NICo takes the server through a power
+cycle, boots it into scout, wipes it (`HostCleanup`) and validates it back to
+`Ready` in about 9 minutes; then `provision.yml` allocates the new instance.
+During the power cycle the server boots its old OS from disk once more: NICo
+tells iPXE to exit to the disk until it reaches `BootingWithDiscoveryImage`.
+
+**Failure 1:** a rerun of `kvm.yml` after provisioning hung at "Every server
+is Ready in NICo": a server with an instance reports `Assigned/Ready`, not
+`Ready`. **Fix:** count `Assigned/*` as ingested.
+
+**Failure 2:** Rocky came up, SSH as `rocky` worked, but its hostname was
+`192-168-92-13.lab1.nico.lab`, not `nico-rocky-02`, so the SSH check would
+have waited out its timeout. cloud-init's log: "Updating hostname to
+192-168-92-13.lab1.nico.lab (nico-rocky-02)". On RHEL-family distros
+cloud-init prefers the FQDN it finds (NICo's DNS name for the address) over
+`hostname` from the user data; Ubuntu does not. **Fix:**
+`prefer_fqdn_over_hostname: false` in the user data.

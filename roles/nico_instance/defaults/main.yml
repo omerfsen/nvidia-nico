@@ -30,8 +30,7 @@ nico_instance_operator: nico-lab
 # first is the default. digest: plain hex sha256 (the imager picks the
 # algorithm from the length; a "sha256:" prefix breaks it). Both images keep
 # /boot on a partition of its own, which the imager needs by UUID. user: the
-# image's cloud-init default user, who gets the SSH key. runcmd: extra
-# first-boot commands.
+# image's cloud-init default user, who gets the SSH key.
 nico_instance_os_images:
   - name: ubuntu-24.04-20261017
     url: http://192.168.91.1:8090/os/ubuntu-24.04-server-cloudimg-amd64-20261017.img
@@ -41,7 +40,6 @@ nico_instance_os_images:
     bootfs_id: b4f0deba-ce7d-45dc-9999-0427f2720320
     efifs_id: 0E9D-3FD8
     user: ubuntu
-    runcmd: []
   - name: rocky-10.2-20260525
     url: http://192.168.91.1:8090/os/Rocky-10-GenericCloud-Base-10.2-20260525.0.x86_64.qcow2
     digest: 9fc9e9ff16888bb68ac39b0392e25c9c92684d50c85f1cce6ab549363bbc4b48
@@ -50,11 +48,6 @@ nico_instance_os_images:
     bootfs_id: ac0faa30-b59a-4f1b-a77b-90cc245d6507
     efifs_id: D779-42D2
     user: rocky
-    # The image logs the kernel to the serial port only; add the screen, so
-    # a server with a GPU shows its boot on the GPU's display (from the
-    # second boot on).
-    runcmd:
-      - [grubby, --update-kernel=ALL, --args=console=tty0]
 
 # Servers to provision: server (NICo machine name), hostname the installed
 # OS gets, os (an image name above; default the first). Login with the key
