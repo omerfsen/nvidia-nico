@@ -1,5 +1,8 @@
 [fnn.admin_vpc]
-enabled = true # Set to true when FNN is enabled on site.
+# Off in the zero-DPU lab (upstream ships true): with it on, nico-api
+# creates an admin VPC from the admin network segment at startup
+# (crates/api-core/src/db_init.rs:470-481) and exits when there is none.
+enabled = false
 # vpc_vni
 vpc_vni = 61325 # Replace 61325 with the VNI that will be used for the admin VPC
 
