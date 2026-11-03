@@ -685,3 +685,12 @@ Seen once in about five installs. **Fix:** on an install that never completed
 missing, the role uninstalls Vault and deletes its volumes before `setup.sh`,
 which then initializes it again. The previous `setup.log` is kept as
 `setup.log.1`, since a rerun overwrote the log of the run that failed.
+
+**The image pipeline (`upstream-images`), first run on a hosted runner:** all
+deployable images built (NICo's core release build alone took 74 minutes),
+then the boot-artifacts build (mkosi: scout, the imager) stopped with
+`No space left on device` after 2.5 hours, so nothing was pushed. The runner
+had 107 GB free after its cleanup step; the Rust builds left most of it in
+Docker's build cache. **Fix:** `tools/build-nico-images.sh` prunes the build
+cache once those images are in its local registry, and prints the runner's
+CPUs, memory and disk.
