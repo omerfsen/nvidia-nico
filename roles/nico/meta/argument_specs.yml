@@ -155,6 +155,27 @@ argument_specs:
             start: '1000'
             end: '1100'
         description: Pools nico-api allocates from (a range is applied once, on first sight).
+      nico_vault_resources:
+        type: dict
+        default:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            cpu: '1'
+            memory: 2Gi
+        description: Vault server resources per replica. Upstream asks 2 CPU and 8 GiB each, which three
+          12 GiB lab nodes cannot schedule.
+      nico_api_resources:
+        type: dict
+        default:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: '3'
+            memory: 4Gi
+        description: nico-api resources. Upstream asks 8 GiB.
       nico_postgres_resources:
         type: dict
         default:

@@ -23,6 +23,7 @@
   loop:
     - values.yaml
     - operators/values/external-secrets.yaml
+    - operators/values/vault.yaml
 
 - name: Site values (helm-prereqs/values.yaml)
   ansible.builtin.copy:
@@ -55,6 +56,16 @@
       webhook: {image: {repository: "{{ nico_eso_image_repository }}"}}
       certController: {image: {repository: "{{ nico_eso_image_repository }}"}}
 
+- name: Vault values (lab-sized)
+  ansible.builtin.copy:
+    dest: "{{ nico_src_dir }}/helm-prereqs/operators/values/vault.yaml"
+    content: |
+      # Rewritten by omerfsen.nico: lab-sized resources (see nico_vault_resources).
+      {{ nico_upstream_values.results[2].stdout | from_yaml | combine(nico_vault_values, recursive=true) | to_nice_yaml(indent=2, width=1000) }}
+    mode: "0644"
+  vars:
+    nico_vault_values: {server: {resources: "{{ nico_vault_resources }}"}}
+
 - name: Fingerprint of every install input
   ansible.builtin.shell: |
     set -euo pipefail
@@ -62,7 +73,8 @@
       echo {{ nico_version }} {{ nico_commit }} {{ nico_image_registry }} {{ nico_image_tag }}
       cat {{ nico_work }}/lab/core-values.yaml {{ nico_work }}/lab/metallb-config.yaml \
           {{ nico_src_dir }}/helm-prereqs/values.yaml \
-          {{ nico_src_dir }}/helm-prereqs/operators/values/external-secrets.yaml
+          {{ nico_src_dir }}/helm-prereqs/operators/values/external-secrets.yaml \
+          {{ nico_src_dir }}/helm-prereqs/operators/values/vault.yaml
     } | sha256sum | cut -d' ' -f1
   args: {executable: /bin/bash}
   register: nico_inputs_hash

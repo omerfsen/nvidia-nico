@@ -23,6 +23,12 @@ global:
 
 nico-api:
   hostname: "{{ nico_api_hostname }}"
+  # No pre-rename clients here, and nothing in helm-prereqs creates the
+  # forge-system namespace these ExternalName aliases go into ("namespaces
+  # forge-system not found" otherwise). nico-pxe's alias is turned off below.
+  legacyAlias:
+    enabled: false
+  resources: {{ nico_api_resources | to_json }}
   auth:
     additionalIssuerCns:
       - "site-root"
@@ -76,6 +82,8 @@ nico-dns:
 {% endfor %}
 
 nico-pxe:
+  legacyAlias:
+    enabled: false
   externalService:
     enabled: true
     annotations:
@@ -83,7 +91,8 @@ nico-pxe:
   bootArtifactContainers:
     - name: boot-artifacts-x86-64
       image: "{{ nico_image_registry }}/boot-artifacts-x86_64:{{ nico_image_tag }}"
-      command: ["sh", "-c", "cp -r /x86_64 /boot-artifacts/blobs/internal"]
+      # NICo's example omits the mkdir: "cp: can't create directory".
+      command: ["sh", "-c", "mkdir -p /boot-artifacts/blobs/internal && cp -r /x86_64 /boot-artifacts/blobs/internal"]
   certificate:
     extraDnsNames:
       - "carbide-pxe.forge"

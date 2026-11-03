@@ -76,6 +76,16 @@ nico_pools:
   vni: {start: "1024500", end: "1024800"}
   vpc_vni: {start: "1000", end: "1100"}
 
+# Lab sizes. Upstream sizes these for a production site: Vault requests
+# 2 CPU and 8 GiB per replica (24 GiB for three) and nico-api 8 GiB, which
+# three 12 GiB lab nodes cannot schedule.
+nico_vault_resources:
+  requests: {cpu: 250m, memory: 512Mi}
+  limits: {cpu: "1", memory: 2Gi}
+nico_api_resources:
+  requests: {cpu: 500m, memory: 1Gi}
+  limits: {cpu: "3", memory: 4Gi}
+
 # Small Postgres for a lab (upstream sizes it for a fleet).
 nico_postgres_resources:
   limits: {cpu: "2", memory: 4Gi}
