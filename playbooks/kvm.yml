@@ -1,10 +1,17 @@
 ---
-# The NICo lab on KVM/libvirt, in order: networks, then the site cluster.
+# The NICo lab on KVM/libvirt, in order: networks, the lab registry, the
+# site cluster (its nodes trust the registry), then NICo's images.
 #
 #   ansible-playbook -i inventory/kvm omerfsen.nico.kvm
 
 - name: Networks
   ansible.builtin.import_playbook: network.yml
 
+- name: Registry
+  ansible.builtin.import_playbook: registry.yml
+
 - name: Site cluster
   ansible.builtin.import_playbook: cluster.yml
+
+- name: Images
+  ansible.builtin.import_playbook: images.yml

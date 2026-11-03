@@ -1,0 +1,40 @@
+---
+# Build NICo's container images from source on a build host (a throwaway
+# Ubuntu 24.04 VM in the lab) and push them to a registry: the 11-image
+# deployable stack (make images) and the x86 boot artifacts
+# (make images-boot-artifacts), amd64 only. Then the Core image is also
+# published as nvmetal-carbide, the name helm-prereqs/setup.sh deploys.
+
+nico_images_repo: https://github.com/dsx-ai-factory/infra-controller.git
+nico_images_version: v2.3.0
+# The commit the tag must point at (v2.3.0, released 2026-10-31).
+nico_images_commit: abc446b33dc773d9b8c7f41b54cccf812758b165
+
+# Where the images go: <registry>/<name>:<tag>.
+nico_images_registry: 192.168.91.1:5000/nico
+nico_images_tag: "{{ nico_images_version }}"
+
+# The build user's checkout and logs.
+nico_images_user: ubuntu
+nico_images_src: "/home/{{ nico_images_user }}/infra-controller"
+nico_images_log_dir: "/home/{{ nico_images_user }}/nico-build-logs"
+
+# Upper bound for one make run, in seconds.
+nico_images_build_timeout: 21600
+
+# Every image the lab deploys. nvmetal-carbide is the Core image (nico)
+# under the name setup.sh uses.
+nico_images_names:
+  - nico
+  - nico-rest-api
+  - nico-rest-workflow
+  - nico-rest-site-manager
+  - nico-rest-site-agent
+  - nico-rest-db
+  - nico-rest-cert-manager
+  - nico-flow
+  - nico-psm
+  - nico-nsm
+  - nico-mcp
+  - boot-artifacts-x86_64
+  - nvmetal-carbide

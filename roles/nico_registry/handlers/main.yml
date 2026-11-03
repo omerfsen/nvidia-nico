@@ -1,0 +1,10 @@
+---
+- name: Restart nico-registry
+  ansible.builtin.systemd_service:
+    name: nico-registry.service
+    state: restarted
+    daemon_reload: true
+
+- name: Refresh the system CA bundle
+  ansible.builtin.command: update-ca-certificates
+  changed_when: true

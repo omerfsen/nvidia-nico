@@ -1,0 +1,28 @@
+---
+# Remove one lab VM: the domain (with NVRAM and TPM state), its disk and
+# cloud-init seed, and its DHCP reservation in nico_kvm_remove_network.
+# Expects nico_kvm_remove_vm = {name, ip, mac}.
+
+- name: Remove {{ nico_kvm_remove_vm.name }}
+  ansible.builtin.shell: |
+    set -euo pipefail
+    name={{ nico_kvm_remove_vm.name | quote }}
+    if virsh dominfo "$name" >/dev/null 2>&1; then
+      virsh destroy "$name" >/dev/null 2>&1 || true
+      virsh undefine "$name" --nvram --tpm >/dev/null
+      echo removed
+    fi
+    for f in {{ (nico_kvm_disk_path ~ '/' ~ nico_kvm_remove_vm.name) | quote }}.qcow2 \
+             {{ (nico_kvm_disk_path ~ '/' ~ nico_kvm_remove_vm.name) | quote }}-seed.iso; do
+      if [ -e "$f" ]; then rm -f "$f"; echo removed; fi
+    done
+    net={{ nico_kvm_remove_network | quote }}
+    entry="<host mac='{{ nico_kvm_remove_vm.mac }}' name='$name' ip='{{ nico_kvm_remove_vm.ip }}'/>"
+    xml=$(virsh net-dumpxml "$net" 2>/dev/null || true)
+    if grep -qF "<host mac='{{ nico_kvm_remove_vm.mac }}'" <<<"$xml"; then
+      virsh net-update "$net" delete ip-dhcp-host "$entry" --live --config >/dev/null
+      echo removed
+    fi
+  args: {executable: /bin/bash}
+  register: nico_kvm_removed
+  changed_when: "'removed' in nico_kvm_removed.stdout"

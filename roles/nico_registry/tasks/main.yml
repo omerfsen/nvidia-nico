@@ -1,0 +1,106 @@
+---
+# The registry on the KVM host: a lab CA and a server certificate for its
+# address (openssl, made once), a systemd unit running the container, and
+# Docker on the host trusting it.
+
+- name: Docker is installed on the host
+  ansible.builtin.command: docker --version
+  changed_when: false
+
+- name: Directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: "{{ nico_registry_data_dir }}", mode: "0755"}
+    - {path: "{{ nico_registry_pki_dir }}", mode: "0755"}
+  loop_control: {label: "{{ item.path }}"}
+
+# ── Lab CA and server certificate ────────────────────────────────────────
+- name: Lab CA
+  ansible.builtin.command: >-
+    openssl req -x509 -newkey rsa:4096 -sha256 -nodes
+    -days {{ nico_registry_ca_days }}
+    -subj "/CN=NICo lab registry CA"
+    -addext basicConstraints=critical,CA:TRUE
+    -addext keyUsage=critical,keyCertSign,cRLSign
+    -keyout {{ nico_registry_pki_dir }}/ca.key
+    -out {{ nico_registry_pki_dir }}/ca.crt
+  args:
+    creates: "{{ nico_registry_pki_dir }}/ca.crt"
+
+- name: Server key and certificate for {{ nico_registry_address }}
+  ansible.builtin.shell: |
+    set -euo pipefail
+    cd {{ nico_registry_pki_dir | quote }}
+    openssl req -newkey rsa:2048 -sha256 -nodes -keyout server.key -out server.csr \
+      -subj "/CN={{ nico_registry_address }}"
+    printf '%s\n' \
+      'basicConstraints=CA:FALSE' \
+      'keyUsage=critical,digitalSignature,keyEncipherment' \
+      'extendedKeyUsage=serverAuth' \
+      'subjectAltName=IP:{{ nico_registry_address }}' > server.ext
+    openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+      -days {{ nico_registry_cert_days }} -sha256 -extfile server.ext -out server.crt
+    rm -f server.csr server.ext
+  args:
+    executable: /bin/bash
+    creates: "{{ nico_registry_pki_dir }}/server.crt"
+  notify: Restart nico-registry
+
+- name: Keys are readable by root only
+  ansible.builtin.file:
+    path: "{{ nico_registry_pki_dir }}/{{ item }}"
+    mode: "0600"
+  loop: [ca.key, server.key]
+
+# The registry process in the container runs as root and reads the key.
+- name: Read the CA certificate
+  ansible.builtin.slurp:
+    src: "{{ nico_registry_pki_dir }}/ca.crt"
+  register: nico_registry_ca_b64
+
+- name: The CA certificate, for the trust tasks
+  ansible.builtin.set_fact:
+    nico_registry_ca_pem: "{{ nico_registry_ca_b64.content | b64decode }}"
+
+# ── The service ──────────────────────────────────────────────────────────
+- name: Registry unit
+  ansible.builtin.template:
+    src: nico-registry.service.j2
+    dest: /etc/systemd/system/nico-registry.service
+    mode: "0644"
+  notify: Restart nico-registry
+
+- name: Registry enabled and running
+  ansible.builtin.systemd_service:
+    name: nico-registry.service
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Apply a changed registry now
+  ansible.builtin.meta: flush_handlers
+
+- name: Docker trust directory for the registry
+  ansible.builtin.file:
+    path: "/etc/docker/certs.d/{{ nico_registry_host }}"
+    state: directory
+    mode: "0755"
+
+- name: Docker on the host trusts it
+  ansible.builtin.copy:
+    dest: "/etc/docker/certs.d/{{ nico_registry_host }}/ca.crt"
+    content: "{{ nico_registry_ca_pem }}"
+    mode: "0644"
+
+- name: The registry answers over TLS
+  ansible.builtin.uri:
+    url: "https://{{ nico_registry_host }}/v2/"
+    ca_path: "{{ nico_registry_pki_dir }}/ca.crt"
+    status_code: 200
+  register: nico_registry_ping
+  retries: 30
+  delay: 2
+  until: nico_registry_ping.status == 200

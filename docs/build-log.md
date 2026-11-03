@@ -145,3 +145,96 @@ by pod IP, resolved `kubernetes.default.svc.cluster.local` (10.96.0.1), and
 fetched `https://api.github.com/zen` through the masquerade. 21 pods
 Running, every `tigerastatus` Available. Disk used: about 3 GiB per node
 VM so far.
+
+## Step 5: The lab registry (2026-11-03)
+
+NICo publishes no public images, so the lab hosts its own registry: CNCF
+distribution 3.1.2 (`registry:3.1.2`, pinned by digest) in a container run by
+`nico-registry.service` on dragon, host networking, listening only on
+`192.168.91.1:5000` (the host's address on `nico-site`). TLS comes from a lab
+CA made once with openssl (`/etc/nico-registry/pki`); no authentication,
+since only the lab networks reach it. The unit waits for the bridge address
+before starting, because libvirt brings the bridge up.
+
+Role `nico_registry`: `main` on the host, `trust` (`tasks_from: trust.yml`)
+on lab machines: the CA in the system store, containerd
+(`/etc/containerd/certs.d/192.168.91.1:5000/hosts.toml` + `ca.crt`) and
+Docker (`/etc/docker/certs.d/...`). containerd reads `certs.d` per pull, so
+no restart. `cluster.yml` now applies the trust on the site nodes when the
+CA exists, so `kvm.yml` runs network, registry, cluster, images in that
+order.
+
+```shell
+ansible-playbook -i inventory/kvm playbooks/registry.yml
+```
+
+**Failure:** "Docker on the host trusts it" failed: `copy` does not create
+the parent directory `/etc/docker/certs.d/192.168.91.1:5000/`. **Fix:** a
+`file` task creates it first. Rerun `changed=0`. Check: `curl` with the lab
+CA gets `{"repositories":[]}`; without it the TLS handshake fails; a site
+node gets HTTP 200 from `/v2/`.
+
+## Step 6: Building NICo's images (2026-11-03)
+
+NICo v2.3.0's GitHub release carries only a CycloneDX SBOM; no images, no
+binaries. Its CI pushes to a private NGC org. So the lab builds them, the way
+`docs/manuals/building_nico_containers.md` describes, in a throwaway VM
+`nico-build` (192.168.91.20; 16 vCPU, 32 GiB, 200 GB; NICo asks for 150 GB
+free) that `playbooks/images.yml` creates only when an image is missing from
+the registry and removes after a successful build.
+
+Role `nico_images`, on the build VM:
+
+1. checkout of `v2.3.0`, checked to be commit `abc446b3`;
+2. NICo's own `scripts/setup-build-host.sh` (apt packages, rustup, the mkosi
+   and ipxe submodules, Docker, binfmt, cargo-make), once;
+3. `make images IMAGE_REGISTRY=192.168.91.1:5000/nico IMAGE_TAG=v2.3.0
+   NICO_ARCHES=amd64` (11 images) and `make images-boot-artifacts
+   BOOT_ARTIFACTS_ARCHES=amd64`, under `direnv exec .` so the repo's
+   `.envrc` (`REPO_ROOT`, `RUSTC_WRAPPER=sccache`) applies;
+4. `nico` published again as `nvmetal-carbide`: the Makefile pushes
+   `<registry>/nico:<tag>` (`Makefile:208-217`) while `helm-prereqs/setup.sh`
+   deploys `<registry>/nvmetal-carbide:<tag>` (`setup.sh:1803`);
+5. a manifest check for all 13 names.
+
+```shell
+ansible-playbook -i inventory/kvm playbooks/images.yml
+```
+
+**Failure 1:** the playbook was started as a background command with a
+one-hour cap, too short for a Rust build; stopping it with `pkill -f` also
+matched the shell that ran `pkill` itself. **Fix:** start long runs detached
+(`setsid nohup ... &`) and watch the PID with `kill -0`, never `pkill -f` /
+`pgrep -f` on a string the watcher's own command line contains.
+
+**Failure 2:** after the bootstrap the role rebooted the VM, as the script
+asks (for its `docker` group and the `kernel.apparmor_restrict_unprivileged_userns`
+sysctl). The VM never came back: its serial console showed the OVMF firmware
+menu. The bootstrap installs the `systemd-boot` package, which takes over
+the UEFI boot path of the Ubuntu cloud image, and nothing was bootable.
+**Fix:** no reboot. `sysctl --system` loads the sysctl and `meta:
+reset_connection` opens a new SSH session, which reads the build user's
+groups again. The build VM is thrown away after the build, so its boot
+loader does not matter.
+
+## Step 7: Pre-pulling the third-party images (2026-11-03)
+
+While NICo's images build, the site nodes pull the public images
+`helm-prereqs/setup.sh` deploys (rendered from the helmfile's charts with
+their values, plus the images named in NICo's manifests): MetalLB 0.14.5,
+cert-manager v1.17.1, Vault 1.14.0 and 1.17, External Secrets v0.14.3, the
+Zalando postgres-operator v1.11.0 with Spilo 16, Keycloak 24.0, Temporal
+1.22.6, local-path-provisioner v0.0.30, chrony, busybox, and a few tools.
+Several are old or `latest`: they are what NICo v2.3.0 pins.
+
+**Failure 1:** every `crictl pull` failed: `crictl: command not found`. The
+pkgs.k8s.io `kubeadm` package no longer depends on `cri-tools`. **Fix:**
+`nico_cluster` installs `cri-tools=1.36.0-1.1` and holds it.
+
+**Failure 2:** `oci.external-secrets.io/external-secrets/external-secrets:v0.14.3`
+failed on every node: `dial tcp 0.0.0.0:443`. The name is a CNAME to
+`gateway.scarf.sh`, a download-analytics gateway, and the LAN's DNS
+(an ad blocker) answers `0.0.0.0` for it; through 1.1.1.1 it resolves.
+**Fix:** use the same image from `ghcr.io/external-secrets/external-secrets`
+(the `nico` role overrides the chart's three image repositories), so the lab
+does not depend on the LAN's DNS block list.

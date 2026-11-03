@@ -1,0 +1,105 @@
+---
+# NICo's container images, built from source and pushed to the lab registry.
+# Only when one is missing: then a throwaway build VM is created, runs NICo's
+# build-host bootstrap and `make images` + `make images-boot-artifacts`
+# (amd64), and is removed again afterwards (nico_kvm_build_vm_keep: true
+# keeps it). Needs registry.yml first.
+#
+#   ansible-playbook -i inventory/kvm omerfsen.nico.images
+
+- name: Find missing images, create the build VM if any
+  hosts: kvm_hosts
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Images in the registry
+      ansible.builtin.include_role:
+        name: omerfsen.nico.nico_images
+        tasks_from: check.yml
+      vars:
+        nico_images_registry: "{{ nico_kvm_registry_repo }}"
+        nico_images_version: "{{ nico_kvm_nico_version }}"
+        nico_images_ca_path: "{{ nico_kvm_registry_ca }}"
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'All images are in ' ~ nico_kvm_registry_repo ~ ', nothing to build.'
+             if nico_images_missing | length == 0
+             else 'Missing: ' ~ nico_images_missing | join(', ') }}
+
+    - name: Build VM
+      when: nico_images_missing | length > 0
+      block:
+        - name: Read the lab CA
+          ansible.builtin.slurp:
+            src: "{{ nico_kvm_registry_ca }}"
+          register: nico_kvm_ca
+
+        - name: Create the build VM
+          ansible.builtin.include_role:
+            name: omerfsen.nvke.libvirt_vm
+          vars:
+            libvirt_vm_name: "{{ nico_kvm_build_vm.name }}"
+            libvirt_vm_ip: "{{ nico_kvm_build_vm.ip }}"
+            libvirt_vm_mac: "{{ nico_kvm_build_vm.mac }}"
+            libvirt_vm_vcpus: "{{ nico_kvm_build_vm.vcpus }}"
+            libvirt_vm_memory_mb: "{{ nico_kvm_build_vm.memory_mb }}"
+            libvirt_vm_disk_gb: "{{ nico_kvm_build_vm.disk_gb }}"
+            libvirt_vm_network: "{{ nico_kvm_site_network }}"
+            libvirt_vm_addressing: dhcp
+            libvirt_vm_autostart: false
+            libvirt_vm_disk_path: "{{ nico_kvm_disk_path }}"
+            libvirt_vm_ssh_key_dir: "{{ nico_kvm_ssh_key_dir }}"
+
+        - name: Add it to nico_build
+          ansible.builtin.add_host:
+            name: "{{ nico_kvm_build_vm.name }}"
+            groups: [nico_build]
+            ansible_host: "{{ nico_kvm_build_vm.ip }}"
+            ansible_user: ubuntu
+            ansible_ssh_private_key_file: "{{ nico_kvm_ssh_key_dir | expanduser }}/{{ nico_kvm_build_vm.name }}_ed25519"
+            ansible_python_interpreter: /usr/bin/python3
+            nico_registry_ca_pem: "{{ nico_kvm_ca.content | b64decode }}"
+            nico_images_missing: "{{ nico_images_missing }}"
+          changed_when: false
+
+- name: Build and push the images
+  hosts: nico_build
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Wait until cloud-init has finished
+      ansible.builtin.command: cloud-init status --wait
+      register: nico_kvm_cloud_init
+      changed_when: false
+      failed_when: nico_kvm_cloud_init.rc not in [0, 2]
+
+    - name: Trust the lab registry
+      ansible.builtin.include_role:
+        name: omerfsen.nico.nico_registry
+        tasks_from: trust.yml
+      vars:
+        nico_registry_address: "{{ nico_kvm_registry_address }}"
+        nico_registry_port: "{{ nico_kvm_registry_port }}"
+
+    - name: Build
+      ansible.builtin.include_role:
+        name: omerfsen.nico.nico_images
+      vars:
+        nico_images_registry: "{{ nico_kvm_registry_repo }}"
+        nico_images_version: "{{ nico_kvm_nico_version }}"
+
+- name: Remove the build VM
+  hosts: kvm_hosts
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Remove it after a successful build
+      ansible.builtin.include_tasks: tasks/remove_vm.yml
+      vars:
+        nico_kvm_remove_vm: "{{ nico_kvm_build_vm }}"
+        nico_kvm_remove_network: "{{ nico_kvm_site_network }}"
+      when:
+        - nico_images_missing | length > 0
+        - not nico_kvm_build_vm_keep | bool

@@ -149,12 +149,14 @@
     signed_by: "/etc/apt/keyrings/kubernetes-v{{ nico_cluster_kubernetes_minor }}.asc"
   register: nico_cluster_repo
 
-- name: Kubeadm, kubelet and kubectl at the pinned version
+- name: Kubeadm, kubelet, kubectl and crictl at the pinned versions
   ansible.builtin.apt:
     name:
       - "kubeadm={{ nico_cluster_kubernetes_package }}"
       - "kubelet={{ nico_cluster_kubernetes_package }}"
       - "kubectl={{ nico_cluster_kubernetes_package }}"
+      # kubeadm no longer depends on cri-tools; crictl is for operators.
+      - "cri-tools={{ nico_cluster_cri_tools_package }}"
     update_cache: "{{ nico_cluster_repo is changed }}"
     cache_valid_time: 3600
     allow_change_held_packages: true
@@ -164,7 +166,7 @@
   ansible.builtin.dpkg_selections:
     name: "{{ item }}"
     selection: hold
-  loop: [kubeadm, kubelet, kubectl]
+  loop: [kubeadm, kubelet, kubectl, cri-tools]
 
 - name: Point crictl at containerd
   ansible.builtin.copy:
