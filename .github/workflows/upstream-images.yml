@@ -1,0 +1,174 @@
+# Vendored from https://github.com/omerfsen/cicd (github/pipelines/upstream-images/); edit it
+# there and re-run its install.sh. Settings for THIS repo live in
+# .github/cicd/config, which install.sh never overwrites.
+#
+# upstream-images - builds container images from ANOTHER project's source at
+# a pinned tag and commit (for projects that publish no images of their own),
+# and pushes them to this repo's registry. Manual only: Actions -> Run
+# workflow. It clones UPSTREAM_IMAGES_REPO at UPSTREAM_IMAGES_REF, checks the
+# commit is UPSTREAM_IMAGES_COMMIT, logs in to UPSTREAM_IMAGES_REGISTRY, and
+# runs this repo's build script (UPSTREAM_IMAGES_SCRIPT), which does the
+# project-specific part: patches, build commands, pushes, checks. Docker Hub
+# needs the variable DOCKERHUB_USERNAME and the secret DOCKERHUB_TOKEN in the
+# UPSTREAM_IMAGES_ENVIRONMENT environment; ghcr.io uses GITHUB_TOKEN.
+#
+# Kill switch: UPSTREAM_IMAGES_ENABLED=false in .github/cicd/config.
+name: upstream-images
+
+on:
+  workflow_dispatch:
+
+# Nothing by default; each job asks for what it needs.
+permissions: {}
+
+concurrency:
+  group: upstream-images-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Reads this repo's settings from the commit the run starts from.
+  switch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      contents: read
+    outputs:
+      on: ${{ steps.s.outputs.on }}
+      runner: ${{ steps.s.outputs.runner }}
+      repo: ${{ steps.s.outputs.repo }}
+      ref: ${{ steps.s.outputs.ref }}
+      commit: ${{ steps.s.outputs.commit }}
+      script: ${{ steps.s.outputs.script }}
+      registry: ${{ steps.s.outputs.registry }}
+      tag: ${{ steps.s.outputs.tag }}
+      environment: ${{ steps.s.outputs.environment }}
+      free_disk: ${{ steps.s.outputs.free_disk }}
+    steps:
+      - id: s
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.event.pull_request.base.sha || github.sha }}
+          # true for a PR from a fork: its code never runs on a self-hosted runner.
+          FORK: ${{ github.event.pull_request.head.repo.full_name != '' && github.event.pull_request.head.repo.full_name != github.repository }}
+        run: |
+          gh api "repos/$REPO/contents/.github/cicd/config?ref=$REF" --jq .content 2>/dev/null | base64 -d > "$RUNNER_TEMP/config" || true
+          conf() { sed -n "s/^$1=//p" "$RUNNER_TEMP/config" | tail -1 | tr -d '"'; }
+          if [ "$(conf UPSTREAM_IMAGES_ENABLED)" = "false" ]; then
+            echo "UPSTREAM_IMAGES_ENABLED is false in .github/cicd/config; nothing runs"; printf 'on=false\nrunner="ubuntu-24.04"\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          v() { local x; x=$(conf "$1"); echo "${x:-$2}"; }
+          # Where the other jobs run: a runner label, or a JSON list of labels
+          # for a self-hosted runner. This job itself stays hosted, so a dead
+          # runner cannot stop it deciding. A fork PR always runs hosted.
+          runner() {  # runner <KEY>: the runs-on value, as JSON for fromJSON
+            local x j
+            x=$(sed -n "s/^$1=//p" "$RUNNER_TEMP/config" | tail -1)  # raw: a JSON list keeps its quotes
+            case "$x" in
+              "") j='"ubuntu-24.04"' ;;
+              \[*) j=$(jq -ce 'select(type == "array" and length > 0 and all(.[]; type == "string" and test("^[A-Za-z0-9._-]+$")))' <<<"$x" 2>/dev/null) || j= ;;
+              *) x=$(tr -d '"' <<<"$x"); if [[ $x =~ ^[A-Za-z0-9._-]+$ ]]; then j=$(jq -nc --arg l "$x" '$l'); else j=; fi ;;
+            esac
+            if [ -z "$j" ]; then echo "::error::$1 must be a runner label or a JSON list of labels, not '$x'" >&2; return 1; fi
+            if [ "$FORK" = true ] && [ "$j" != '"ubuntu-24.04"' ]; then
+              echo "::notice::A PR from a fork runs on ubuntu-24.04, whatever $1 says" >&2; j='"ubuntu-24.04"'
+            fi
+            echo "$j"
+          }
+          r=$(runner UPSTREAM_IMAGES_RUNNER) || { echo 'runner="ubuntu-24.04"' >> "$GITHUB_OUTPUT"; exit 1; }
+          # Required keys are checked by the build job, so this job always
+          # decides the runner.
+          registry=$(v UPSTREAM_IMAGES_REGISTRY ""); registry=${registry,,}
+          ref=$(v UPSTREAM_IMAGES_REF "")
+          {
+            echo "runner=$r"
+            echo "repo=$(v UPSTREAM_IMAGES_REPO "")"
+            echo "ref=$ref"
+            echo "commit=$(v UPSTREAM_IMAGES_COMMIT "")"
+            echo "script=$(v UPSTREAM_IMAGES_SCRIPT "")"
+            echo "registry=$registry"
+            echo "tag=$(v UPSTREAM_IMAGES_TAG "$ref")"
+            echo "environment=$(v UPSTREAM_IMAGES_ENVIRONMENT images)"
+            echo "free_disk=$(v UPSTREAM_IMAGES_FREE_DISK true)"
+            echo "on=true"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: switch
+    if: needs.switch.outputs.on == 'true'
+    runs-on: ${{ fromJSON(needs.switch.outputs.runner) }}
+    environment: ${{ needs.switch.outputs.environment }}
+    # GitHub-hosted jobs stop at 6 hours.
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      packages: write # ghcr.io push with GITHUB_TOKEN
+    env:
+      UPSTREAM_SRC: ${{ github.workspace }}/upstream
+      UPSTREAM_REPO: ${{ needs.switch.outputs.repo }}
+      UPSTREAM_REF: ${{ needs.switch.outputs.ref }}
+      UPSTREAM_COMMIT: ${{ needs.switch.outputs.commit }}
+      UPSTREAM_REGISTRY: ${{ needs.switch.outputs.registry }}
+      UPSTREAM_TAG: ${{ needs.switch.outputs.tag }}
+    steps:
+      - name: Settings
+        env:
+          SCRIPT: ${{ needs.switch.outputs.script }}
+        run: |
+          bad=0
+          for k in UPSTREAM_REPO UPSTREAM_REF UPSTREAM_COMMIT UPSTREAM_REGISTRY SCRIPT; do
+            if [ -z "${!k}" ]; then echo "::error::set ${k/#SCRIPT/UPSTREAM_IMAGES_SCRIPT} (UPSTREAM_IMAGES_*) in .github/cicd/config" >&2; bad=1; fi
+          done
+          case "$UPSTREAM_REGISTRY" in
+            docker.io/?*|ghcr.io/?*) ;;
+            *) echo "::error::UPSTREAM_IMAGES_REGISTRY must be docker.io/<user> or ghcr.io/<owner>, not '$UPSTREAM_REGISTRY'" >&2; bad=1 ;;
+          esac
+          if ! [[ $UPSTREAM_COMMIT =~ ^[0-9a-f]{40}$ ]]; then echo "::error::UPSTREAM_IMAGES_COMMIT must be a full 40-character commit SHA" >&2; bad=1; fi
+          case "$SCRIPT" in /*|*..*) echo "::error::UPSTREAM_IMAGES_SCRIPT must be a path inside the repo" >&2; bad=1 ;; esac
+          exit "$bad"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: repo
+          persist-credentials: false
+
+      # A hosted runner has about 14 GB free; its preinstalled SDKs take most
+      # of the rest. Skipped on a self-hosted runner (UPSTREAM_IMAGES_FREE_DISK=false).
+      - name: Free disk space (hosted runner)
+        if: needs.switch.outputs.free_disk == 'true'
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune -af >/dev/null
+          df -h /
+
+      - name: Upstream source at the pinned commit
+        run: |
+          git clone --quiet --depth 1 --branch "$UPSTREAM_REF" "$UPSTREAM_REPO" "$UPSTREAM_SRC"
+          got=$(git -C "$UPSTREAM_SRC" rev-parse HEAD)
+          if [ "$got" != "$UPSTREAM_COMMIT" ]; then
+            echo "::error::$UPSTREAM_REF is $got, not the pinned $UPSTREAM_COMMIT" >&2; exit 1
+          fi
+
+      - name: Log in to Docker Hub
+        if: startsWith(needs.switch.outputs.registry, 'docker.io/')
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Log in to ghcr.io
+        if: startsWith(needs.switch.outputs.registry, 'ghcr.io/')
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build and push (${{ needs.switch.outputs.script }})
+        env:
+          SCRIPT: ${{ needs.switch.outputs.script }}
+        run: |
+          cd "$GITHUB_WORKSPACE/repo"
+          bash "./$SCRIPT"
