@@ -238,3 +238,61 @@ failed on every node: `dial tcp 0.0.0.0:443`. The name is a CNAME to
 **Fix:** use the same image from `ghcr.io/external-secrets/external-secrets`
 (the `nico` role overrides the chart's three image repositories), so the lab
 does not depend on the LAN's DNS block list.
+
+## Step 8: The servers and their mock BMCs (2026-11-03)
+
+bmc-mock is not part of `make images`; it has its own Dockerfile
+(`crates/bmc-mock/Dockerfile`, Rust built inside Docker, no emulation). It
+was built on dragon from the v2.3.0 checkout while the build VM compiled the
+rest, and pushed as `192.168.91.1:5000/nico/bmc-mock:v2.3.0` (258 MB).
+
+What bmc-mock generates for the Dell R750 profile, zero DPUs, instance index
+1 (read from a throwaway container on the internal backend):
+
+| Item | Value |
+|---|---|
+| Model, serial | Dell PowerEdge R750, `020000010001` |
+| BMC NIC `NIC.1` | `02:00:00:01:00:01` |
+| Host NIC `NIC.Slot.1-1` (the non-DPU NIC) | `02:00:00:01:00:02` |
+| Embedded NICs | `06:00:00:01:01:01`, `06:00:00:01:01:02` |
+
+bmc-mock never infers anything from the VM, so the role gives the VM and the
+BMC exactly these MACs, and checks the BMC reports the VM's NIC.
+
+How the pieces sit on `nico-inband` (role `nico_server`):
+
+- **Mock BMC per server** in its own network namespace `bmc-<server>`: a
+  veth into `virbr-nicoib` with the BMC MAC and the BMC's IP
+  (`192.168.92.11`), the bmc-mock binary taken out of its image and run with
+  `ip netns exec` by `nico-bmc@<server>.service`, port 443 (NICo's default
+  BMC port, `crates/api-model/src/machine/mod.rs:1268`), libvirt backend
+  over the host's socket. bmc-mock has no bind-address option, so a separate
+  namespace is the way to give each BMC its own address and MAC on the L2,
+  as on real hardware. Docker networking on a libvirt bridge was ruled out:
+  Docker's FORWARD rules could cut the VMs' traffic.
+- **The server VM**: q35, OVMF (no Secure Boot), swtpm TPM 2.0 (CRB; libvirt
+  creates its EK certificate with `swtpm_localca`), a blank 60 GB disk,
+  network boot first, NIC MAC from the table, defined **shut off**: NICo
+  powers it through the BMC.
+- **DHCP relay** for the segment: dnsmasq, relay only, in its own namespace
+  `nico-relay` at `192.168.92.2`, forwarding to nico-dhcp's VIP
+  `192.168.91.200`. On the host it would never see nico-dhcp's replies:
+  they enter dragon on `virbr-nicosite`, where libvirt's dnsmasq has UDP 67
+  bound to that device (`ss -ulpn` shows `0.0.0.0%virbr-nicosite:67`).
+
+```shell
+ansible-playbook -i inventory/kvm playbooks/servers.yml
+```
+
+**Failure:** `nico-bmc@nico-server-01` crash-looped: `panicked at
+crates/bmc-mock/src/tls.rs:92: Could not find the crt file for bmc-mock`.
+bmc-mock reads `tls.crt`/`tls.key` from `--cert-path`, else `/opt/carbide`
+or `$REPO_ROOT/crates/bmc-mock`; its image ships none. **Fix:** like a real
+BMC, a self-signed certificate per BMC for its IP, passed with
+`--cert-path`.
+
+**Check (before NICo exists):** Redfish `ComputerSystem.Reset` `On` to
+`https://192.168.92.11` returned 200 and started the VM; it PXE-booted and
+broadcast DHCP from `02:00:00:01:00:02`; the relay forwarded each request to
+`192.168.91.200` (`DHCP relay at 192.168.92.2 -> 192.168.91.200`).
+`ForceOff` stopped it again. Rerun: `changed=0`.
