@@ -1,57 +1,145 @@
 # omerfsen.nico
 
 An NVIDIA Infra Controller (NICo) lab on a single KVM host, as an Ansible
-collection: the libvirt networks, a three-node Kubernetes site cluster, and
-(coming next) the NICo control plane built from source and libvirt VMs with
-mock Redfish BMCs that NICo discovers, ingests and provisions. Every step,
-failure and fix is in [docs/build-log.md](https://github.com/omerfsen/nvidia-nico/blob/main/docs/build-log.md).
+collection. It builds a three-node Kubernetes site cluster, installs NICo's
+control plane (built from source), and gives NICo "bare-metal" servers to
+manage: libvirt VMs with mock Redfish BMCs. NICo discovers them, ingests
+them and installs an OS on them, the way it does with real servers, with no
+BlueField DPUs (zero-DPU topology). Every step, failure and fix is in
+[docs/build-log.md](https://github.com/omerfsen/nvidia-nico/blob/main/docs/build-log.md).
 
-Status: networks and site cluster work; NICo itself is not installed yet.
+Status: works end to end on one build machine, from scratch: NICo v2.3.0,
+two servers (one with a passed-through GPU) ingested to Ready and
+provisioned with Ubuntu 24.04 by NICo.
 
-## What it builds
+## The VMs
 
-| Piece | Where | What |
+| VM | Role | Address |
 |---|---|---|
-| `nico-site` network | 192.168.91.0/24, route mode | cluster nodes .11-.13, MetalLB VIPs .200-.250 |
-| `nico-inband` network | 192.168.92.0/24, route mode, no libvirt DHCP | the servers NICo manages (zero-DPU HostInband segment) |
-| Site cluster | `nico-node-01..03` | Kubernetes 1.36.5 (kubeadm), containerd 2.3.7, Calico 3.32.2, every node schedulable |
+| `nico-node-01` | Kubernetes control plane of the site cluster (also runs workloads) | 192.168.91.11 |
+| `nico-node-02`, `nico-node-03` | Site cluster nodes. NICo's control plane (API, DHCP, PXE, DNS, Vault, PostgreSQL, Temporal, REST API) runs across all three | 192.168.91.12-13 |
+| `nico-server-01` | A server NICo manages. Its BMC is NICo's `bmc-mock` (Dell R750 profile) at 192.168.92.11 | 192.168.92.10, assigned by NICo |
+| `nico-server-02` | A server NICo manages, with the host's GPU passed through (only when `nico_kvm_gpu_devices` is set). BMC at 192.168.92.12 | 192.168.92.13, assigned by NICo |
+
+The site nodes are the "data center control plane"; the servers are the
+fleet. Nobody logs into a server to set it up: NICo powers it on and off,
+sets its BIOS, network-boots it, wipes it and installs its OS, through its
+BMC and the network boot.
+
+## Networks and addresses
+
+| Network | Subnet | What is on it |
+|---|---|---|
+| `nico-site` | 192.168.91.0/24 | site nodes; NICo's service VIPs (MetalLB L2): DHCP .200, PXE .201, DNS for `.forge` (unbound) .202, SSH console .203, DNS .204-.205, NTP .206-.208, API .240; the lab registry and artifact server on the host's .1 |
+| `nico-inband` | 192.168.92.0/24 | the servers' NICs and their mock BMCs (zero-DPU HostInband segment). No libvirt DHCP: NICo's DHCP answers through a relay at .2 |
+
+Both networks are routed (not NAT), so the servers reach NICo's VIPs, and
+both are masqueraded to the internet.
 
 ## Run
 
-On the KVM host (Ubuntu 24.04 with libvirt, passwordless sudo):
+On the KVM host (Ubuntu 24.04 with libvirt and Docker, passwordless sudo):
 
 ```shell
 make dev            # on the build machine: make dev PYTHON=/home/linuxbrew/.linuxbrew/opt/python@3.12/bin/python3.12
 source .venv/bin/activate
-ansible-playbook playbooks/kvm.yml          # networks, then the site cluster
-export KUBECONFIG=~/.kube/nico-site.yaml
-kubectl get nodes
+ansible-playbook playbooks/kvm.yml     # everything below, in order
 ```
 
-Or one piece at a time: `playbooks/network.yml`, `playbooks/cluster.yml`.
-Overrides go in `inventory/kvm/group_vars/all/local.yml` (gitignored).
-`make kvm-destroy` removes the VMs (asks first).
+`kvm.yml` runs these playbooks, each rerunnable on its own (`changed=0`
+when nothing changed):
+
+| Playbook | Builds |
+|---|---|
+| `network.yml` | the two libvirt networks |
+| `registry.yml` | a TLS registry on the host for NICo's images |
+| `artifacts.yml` | an HTTP server on the host for the OS images NICo installs |
+| `cluster.yml` | the site cluster (kubeadm, containerd, Calico) |
+| `images.yml` | NICo's images: copied from Docker Hub (`nico_kvm_images_seed`) or built from source in a throwaway VM |
+| `nico.yml` | NICo's control plane, with NICo's own `helm-prereqs/setup.sh` |
+| `servers.yml` | the servers and their mock BMCs, registered with NICo, until Ready |
+| `provision.yml` | NICo installs Ubuntu on the servers |
+
+Overrides go in `inventory/kvm/group_vars/all/local.yml` (gitignored), for
+example the GPU to pass through:
+
+```yaml
+nico_kvm_gpu_devices: ["0000:01:00.0", "0000:01:00.1"]   # already bound to vfio-pci
+```
+
+`make kvm-destroy` removes the lab's VMs (asks first); the registry, the
+artifact server and the networks stay.
+
+## Access
+
+All of these run on the build machine; the lab networks are only reachable
+from there.
+
+**Kubernetes** (the site cluster):
+
+```shell
+export KUBECONFIG=~/.kube/nico-site.yaml
+kubectl get pods -A
+```
+
+**NICo's admin CLI** runs in a pod in the cluster (NICo's API certificate
+names only cluster DNS names):
+
+```shell
+kubectl -n nico-system exec deploy/nico-lab-admin -- /opt/carbide/nico-admin-cli machine show
+kubectl -n nico-system exec deploy/nico-lab-admin -- /opt/carbide/nico-admin-cli instance show
+```
+
+**The servers** (after `provision.yml`): user `ubuntu`, key
+`~/.ssh/nico/instance_ed25519` (generated by the `nico_instance` role and
+put on each server by NICo through cloud-init), no password, sudo without a
+password:
+
+```shell
+ssh -i ~/.ssh/nico/instance_ed25519 ubuntu@192.168.92.10    # nico-ubuntu-01 on nico-server-01
+ssh -i ~/.ssh/nico/instance_ed25519 ubuntu@192.168.92.13    # nico-ubuntu-02 on nico-server-02 (GPU)
+```
+
+From another machine, jump through the build machine (the key must then be
+on that machine too):
+
+```shell
+ssh -J <user>@<build machine> -i <key> ubuntu@192.168.92.13
+```
+
+Until a server is provisioned it runs NICo's discovery OS (scout), which has
+no login for you. A server with a passed-through GPU shows its console on that
+GPU's display output.
+
+**A mock BMC** answers Redfish like a real one:
+
+```shell
+curl -k https://192.168.92.11/redfish/v1/Systems/System.Embedded.1
+```
 
 ## Roles
 
 | Role | Does |
 |---|---|
 | [`nico_network`](https://github.com/omerfsen/nvidia-nico/blob/main/roles/nico_network/README.md) | libvirt networks in route mode, masquerade to the internet |
+| [`nico_registry`](https://github.com/omerfsen/nvidia-nico/blob/main/roles/nico_registry/README.md) | private OCI registry with a lab CA, and trust for it |
+| [`nico_artifacts`](https://github.com/omerfsen/nvidia-nico/blob/main/roles/nico_artifacts/README.md) | HTTP file server for OS images |
 | [`nico_cluster`](https://github.com/omerfsen/nvidia-nico/blob/main/roles/nico_cluster/README.md) | kubeadm + containerd + Calico, every node schedulable |
+| [`nico_images`](https://github.com/omerfsen/nvidia-nico/blob/main/roles/nico_images/README.md) | NICo's images from source, and the patched bmc-mock |
+| [`nico`](https://github.com/omerfsen/nvidia-nico/blob/main/roles/nico/README.md) | NICo's control plane via `setup.sh`, for a zero-DPU site |
+| [`nico_server`](https://github.com/omerfsen/nvidia-nico/blob/main/roles/nico_server/README.md) | server VMs, mock BMCs in network namespaces, DHCP relay |
+| [`nico_ingest`](https://github.com/omerfsen/nvidia-nico/blob/main/roles/nico_ingest/README.md) | admin pod, expected machines, wait for Ready |
+| [`nico_instance`](https://github.com/omerfsen/nvidia-nico/blob/main/roles/nico_instance/README.md) | tenant, VPC, OS image and instances: NICo installs an OS |
 
 VMs are created with `omerfsen.nvke.libvirt_vm` (dependency).
-
-## License
-
-Apache-2.0
 
 ## Images
 
 NICo publishes no public images, so the lab builds them from source
 (`playbooks/images.yml`) or copies the published builds from Docker Hub
-(`docker.io/omerfsen/*`, unofficial, not affiliated with NVIDIA) into its
-registry first. The GitHub Actions workflow `upstream-images` (manual only:
-Actions → upstream-images → Run workflow) rebuilds them with
+(`docker.io/omerfsen/*`, unofficial builds, not affiliated with NVIDIA) into
+its registry first. The GitHub Actions workflow `upstream-images` (manual
+only: Actions → upstream-images → Run workflow) rebuilds them with
 `tools/build-nico-images.sh` and pushes them to Docker Hub. It needs a Docker
 Hub access token (Read & Write) as secret `DOCKERHUB_TOKEN` in the `images`
 environment:
@@ -59,3 +147,7 @@ environment:
 ```shell
 gh secret set DOCKERHUB_TOKEN --env images -R omerfsen/nvidia-nico
 ```
+
+## License
+
+Apache-2.0
