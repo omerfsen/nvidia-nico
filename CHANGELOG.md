@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/omerfsen/nvidia-nico/compare/v0.1.0...v0.1.1) (2026-11-03)
+
+
+### Bug fixes
+
+* harden provisioning, Vault init and the image build ([#21](https://github.com/omerfsen/nvidia-nico/issues/21)) ([6d460ec](https://github.com/omerfsen/nvidia-nico/commit/6d460eca54d27ee203a1a3dbdb90aaf8828309c8))
+
 ## 0.1.0 (2026-11-03)
 
 
