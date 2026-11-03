@@ -16,11 +16,14 @@ tags:
   - nico
   - nvidia
   - kubernetes
+  - kubeadm
+  - calico
   - k8s
   - baremetal
   - libvirt
   - infrastructure
-dependencies: {}
+dependencies:
+  omerfsen.nvke: ">=0.2.0,<0.3.0"
 repository: https://github.com/omerfsen/nvidia-nico
 documentation: https://github.com/omerfsen/nvidia-nico/blob/main/README.md
 issues: https://github.com/omerfsen/nvidia-nico/issues

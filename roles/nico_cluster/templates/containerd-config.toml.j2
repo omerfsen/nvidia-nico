@@ -1,0 +1,9 @@
+# {{ ansible_managed }}
+version = 3
+
+[plugins.'io.containerd.cri.v1.images'.registry]
+  # Per-registry settings (mirrors, CAs) go in <dir>/<registry>/hosts.toml.
+  config_path = '/etc/containerd/certs.d'
+
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runc.options]
+  SystemdCgroup = true

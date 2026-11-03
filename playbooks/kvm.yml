@@ -1,0 +1,10 @@
+---
+# The NICo lab on KVM/libvirt, in order: networks, then the site cluster.
+#
+#   ansible-playbook -i inventory/kvm omerfsen.nico.kvm
+
+- name: Networks
+  ansible.builtin.import_playbook: network.yml
+
+- name: Site cluster
+  ansible.builtin.import_playbook: cluster.yml

@@ -1,0 +1,101 @@
+---
+# libvirt networks in route mode plus a masquerade per network, on the KVM
+# host. A network is defined once: to change an existing one's addresses,
+# remove it first (virsh net-destroy + net-undefine).
+
+- name: Networks are fully described
+  ansible.builtin.assert:
+    that:
+      - nico_network_networks | length > 0
+      - item.name is defined and item.bridge is defined and item.address is defined and item.prefix is defined
+      - item.bridge | length <= 15
+      - (item.dhcp_start is defined) == (item.dhcp_end is defined)
+    fail_msg: "Each network needs name, bridge (15 characters at most), address, prefix, and dhcp_start with dhcp_end or neither: {{ item }}"
+    quiet: true
+  loop: "{{ nico_network_networks }}"
+  loop_control: {label: "{{ item.name | default('?') }}"}
+
+- name: Find the uplink
+  ansible.builtin.set_fact:
+    nico_network_uplink_interface: >-
+      {{ nico_network_uplink if nico_network_uplink | length > 0
+         else ansible_facts.default_ipv4.interface | default('') }}
+
+- name: The uplink is known
+  ansible.builtin.assert:
+    that: nico_network_uplink_interface | length > 0
+    fail_msg: No default IPv4 route; set nico_network_uplink.
+    quiet: true
+
+- name: Directory for the network definitions
+  ansible.builtin.file:
+    path: "{{ nico_network_config_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Network definitions
+  ansible.builtin.template:
+    src: network.xml.j2
+    dest: "{{ nico_network_config_dir }}/{{ nico_network_item.name }}.xml"
+    mode: "0644"
+  loop: "{{ nico_network_networks }}"
+  loop_control: {loop_var: nico_network_item, label: "{{ nico_network_item.name }}"}
+
+- name: Define, autostart and start each network
+  ansible.builtin.shell: |
+    set -euo pipefail
+    name={{ nico_network_item.name | quote }}
+    if ! virsh net-info "$name" >/dev/null 2>&1; then
+      virsh net-define {{ (nico_network_config_dir ~ '/' ~ nico_network_item.name ~ '.xml') | quote }} >/dev/null
+      echo defined
+    fi
+    # Read once into a variable: grep -q on a pipe can make virsh die of
+    # SIGPIPE, which pipefail turns into a false condition.
+    info=$(virsh net-info "$name")
+    if grep -q '^Autostart: *no' <<<"$info"; then
+      virsh net-autostart "$name" >/dev/null; echo autostart
+    fi
+    if grep -q '^Active: *no' <<<"$info"; then
+      virsh net-start "$name" >/dev/null; echo started
+    fi
+  args: {executable: /bin/bash}
+  register: nico_network_define
+  changed_when: nico_network_define.stdout | length > 0
+  loop: "{{ nico_network_networks }}"
+  loop_control: {loop_var: nico_network_item, label: "{{ nico_network_item.name }}"}
+
+# An existing network keeps its definition: say so when the file differs.
+- name: Running networks match their definitions
+  ansible.builtin.shell: |
+    set -euo pipefail
+    want={{ nico_network_item.address | quote }}
+    xml=$(virsh net-dumpxml {{ nico_network_item.name | quote }})
+    grep -q "address='$want'" <<<"$xml"
+  args: {executable: /bin/bash}
+  changed_when: false
+  loop: "{{ nico_network_networks }}"
+  loop_control: {loop_var: nico_network_item, label: "{{ nico_network_item.name }}"}
+
+- name: Masquerade script
+  ansible.builtin.template:
+    src: nico-network-nat.j2
+    dest: /usr/local/sbin/nico-network-nat
+    mode: "0755"
+  notify: Restart nico-network-nat
+
+- name: Masquerade unit
+  ansible.builtin.template:
+    src: nico-network-nat.service.j2
+    dest: /etc/systemd/system/nico-network-nat.service
+    mode: "0644"
+  notify: Restart nico-network-nat
+
+- name: Masquerade enabled and running
+  ansible.builtin.systemd_service:
+    name: nico-network-nat.service
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Apply a changed masquerade now
+  ansible.builtin.meta: flush_handlers

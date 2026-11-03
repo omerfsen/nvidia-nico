@@ -1,0 +1,18 @@
+---
+# Every node: the container runtime and Kubernetes packages. Then the
+# control plane (kubeadm init + Calico), then the other nodes join.
+
+- name: Prepare the node
+  ansible.builtin.import_tasks: node.yml
+
+- name: Control plane
+  ansible.builtin.include_tasks: control_plane.yml
+  when: inventory_hostname == nico_cluster_control_plane
+
+- name: Join the other nodes
+  ansible.builtin.include_tasks: join.yml
+  when: inventory_hostname != nico_cluster_control_plane
+
+- name: Every node is Ready, and the kubeconfig is copied
+  ansible.builtin.include_tasks: finish.yml
+  when: inventory_hostname == nico_cluster_control_plane

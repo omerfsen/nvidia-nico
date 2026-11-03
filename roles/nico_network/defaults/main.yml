@@ -1,0 +1,17 @@
+---
+# libvirt networks for the lab, each in route mode (no libvirt NAT), so
+# VMs on one network can open connections to the other: libvirt's NAT mode
+# rejects new connections that come in from another network. Internet
+# access comes from a masquerade rule per network on the uplink.
+#
+# Each entry: name, bridge (at most 15 characters), address (the host's
+# address on it, also the gateway), prefix, and optionally dhcp_start and
+# dhcp_end for libvirt DHCP. Without them libvirt serves no DHCP there.
+nico_network_networks: []
+
+# The interface that leads to the internet; masquerade applies there.
+# Empty: the interface of the default IPv4 route.
+nico_network_uplink: ""
+
+# Where the network definitions are kept on the host.
+nico_network_config_dir: /etc/libvirt/nico

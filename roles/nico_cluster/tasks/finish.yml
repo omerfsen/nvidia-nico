@@ -1,0 +1,31 @@
+---
+- name: Every node is Ready
+  ansible.builtin.command: >-
+    kubectl --kubeconfig /etc/kubernetes/admin.conf wait --for=condition=Ready
+    node --all --timeout=30s
+  register: nico_cluster_nodes_ready
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: nico_cluster_nodes_ready.rc == 0
+
+- name: Every node joined
+  ansible.builtin.command: kubectl --kubeconfig /etc/kubernetes/admin.conf get nodes -o name
+  register: nico_cluster_node_list
+  changed_when: false
+  failed_when: nico_cluster_node_list.stdout_lines | length != ansible_play_hosts_all | length
+
+- name: Copy the admin kubeconfig to the controller
+  ansible.builtin.fetch:
+    src: /etc/kubernetes/admin.conf
+    dest: "{{ nico_cluster_kubeconfig | expanduser }}"
+    flat: true
+  when: nico_cluster_kubeconfig | length > 0
+
+- name: Only the owner reads the kubeconfig
+  ansible.builtin.file:
+    path: "{{ nico_cluster_kubeconfig | expanduser }}"
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+  when: nico_cluster_kubeconfig | length > 0

@@ -1,0 +1,89 @@
+---
+argument_specs:
+  main:
+    short_description: kubeadm Kubernetes with containerd and Calico, every node schedulable
+    description:
+      - Installs containerd and runc from their releases and kubeadm, kubelet and
+        kubectl from pkgs.k8s.io, all pinned, on Ubuntu 24.04 nodes; runs
+        kubeadm init on the control plane without the control-plane taint,
+        installs Calico through the Tigera operator, joins the other nodes and
+        waits until every node is Ready.
+      - Run it on every node of the cluster in one play. Reruns change nothing.
+    options:
+      nico_cluster_control_plane:
+        type: str
+        default: "{{ ansible_play_hosts_all | first }}"
+        description: Inventory name of the control-plane node.
+      nico_cluster_node_ip:
+        type: str
+        default: "{{ ansible_host }}"
+        description: This node's address for the API server and kubelet.
+      nico_cluster_kubernetes_version:
+        type: str
+        default: 1.36.5
+        description: Kubernetes version (kubeadm, kubelet, kubectl and the control plane).
+      nico_cluster_kubernetes_package_revision:
+        type: str
+        default: "1.1"
+        description: pkgs.k8s.io package revision for that version.
+      nico_cluster_kubernetes_key_fingerprint:
+        type: str
+        default: DE15B14486CD377B9E876E1A234654DA9A296436
+        description: Fingerprint the pkgs.k8s.io signing key must have.
+      nico_cluster_kubernetes_minor:
+        type: str
+        default: "{{ nico_cluster_kubernetes_version.split('.')[:2] | join('.') }}"
+        description: Derived; the pkgs.k8s.io repository minor.
+      nico_cluster_kubernetes_package:
+        type: str
+        default: "{{ nico_cluster_kubernetes_version }}-{{ nico_cluster_kubernetes_package_revision }}"
+        description: Derived; the package version string.
+      nico_cluster_containerd_version:
+        type: str
+        default: 2.3.7
+        description: containerd release.
+      nico_cluster_containerd_sha256:
+        type: str
+        default: 09a1b669ac6d21e7e24c3c33a9805b48987ba5845e8d88f039c47013a0c0025c
+        description: sha256 of containerd-<version>-linux-amd64.tar.gz.
+      nico_cluster_runc_version:
+        type: str
+        default: 1.5.2
+        description: runc release (the one containerd pins).
+      nico_cluster_runc_sha256:
+        type: str
+        default: 599f6f94ff8c5057241eff0d54c3c74f95c34935b6457b33fe545defc61e9488
+        description: sha256 of runc.amd64.
+      nico_cluster_calico_version:
+        type: str
+        default: 3.32.2
+        description: Calico release; its Tigera operator manifest is applied.
+      nico_cluster_calico_operator_sha256:
+        type: str
+        default: 4e372754e4e1c3a61cf7c0ceb9bc9fff2f78aa6575dcadcb5ea4e716bb00dffa
+        description: sha256 of that release's manifests/tigera-operator.yaml.
+      nico_cluster_pod_cidr:
+        type: str
+        default: 10.244.0.0/16
+        description: Pod network (Calico IP pool).
+      nico_cluster_service_cidr:
+        type: str
+        default: 10.96.0.0/12
+        description: Service network.
+      nico_cluster_sysctls:
+        type: dict
+        default:
+          net.bridge.bridge-nf-call-iptables: 1
+          net.bridge.bridge-nf-call-ip6tables: 1
+          net.ipv4.ip_forward: 1
+          fs.inotify.max_user_instances: 8192
+          fs.inotify.max_user_watches: 524288
+        description: Kernel settings written to /etc/sysctl.d/90-nico-cluster.conf.
+      nico_cluster_kubeconfig:
+        type: str
+        default: ""
+        description: Path on the controller to copy the admin kubeconfig to. Empty skips it.
+      nico_cluster_cache_dir:
+        type: str
+        default: /var/cache/nico-cluster
+        description: Download directory on the nodes.
