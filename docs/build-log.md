@@ -281,3 +281,27 @@ limit 4 GiB) in the Core values.
 `cp: can't create directory '/boot-artifacts/blobs/internal'`. The
 `bootArtifactContainers` command in NICo's own example values copies into a
 directory nobody creates. **Fix:** `mkdir -p` before the copy.
+
+**Failure 4:** with memory fixed, `nico-api` crash-looped at startup:
+`no rows returned by a query that expected to return at least one row ...
+WHERE network_segment_type = 'admin'` (`crates/api-core/src/setup.rs:1467`).
+NICo's template ships `[fnn.admin_vpc] enabled = true`, and with it on
+nico-api creates the admin VPC from the admin network segment at startup
+(`crates/api-core/src/db_init.rs:470-481`); a zero-DPU site with only a
+HostInband segment has none. **Fix:** `[fnn.admin_vpc] enabled = false` in
+the role's copy of the FNN block (FNN routing is a DPU-site feature).
+
+**Result:** `setup.sh` ran all seven phases ("Setup complete"; site UUID
+`daf8564a-0fdf-4f3a-9453-fc4fc6071513`), 80 pods Running, every VIP
+assigned (API `.240`, DHCP `.200`, PXE `.201`, unbound `.202`, SSH console
+`.203`, DNS `.204-.205`, NTP `.206-.208`), Keycloak issues a token. Memory
+requests per node 27-34% (85% before the Vault/nico-api sizing).
+
+Vault's StatefulSet uses `OnDelete`, so its pods kept the 8 GiB requests
+until deleted: restarting them one at a time applied the new size, and each
+came back sealed. The next run changed only "Unseal Vault" (setup.sh
+skipped: unchanged fingerprint); the run after that: `changed=0`.
+
+```shell
+ansible-playbook -i inventory/kvm playbooks/nico.yml
+```
