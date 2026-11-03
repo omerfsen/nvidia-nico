@@ -1,0 +1,16 @@
+---
+# The lab's OCI registry on the KVM host, on the site network address, with
+# TLS from a lab CA. Run it after network.yml (it listens on the site
+# network's bridge) and before cluster.yml (the nodes trust its CA).
+#
+#   ansible-playbook -i inventory/kvm omerfsen.nico.registry
+
+- name: Lab registry
+  hosts: kvm_hosts
+  become: true
+  gather_facts: false
+  roles:
+    - role: omerfsen.nico.nico_registry
+      vars:
+        nico_registry_address: "{{ nico_kvm_registry_address }}"
+        nico_registry_port: "{{ nico_kvm_registry_port }}"

@@ -17,6 +17,9 @@ nico_cluster_kubernetes_package_revision: "1.1"
 # re-signed when its expiry moves, so its checksum is not stable).
 nico_cluster_kubernetes_key_fingerprint: DE15B14486CD377B9E876E1A234654DA9A296436
 
+# crictl, from the same pkgs.k8s.io repository.
+nico_cluster_cri_tools_package: 1.36.0-1.1
+
 nico_cluster_containerd_version: 2.3.7
 nico_cluster_containerd_sha256: 09a1b669ac6d21e7e24c3c33a9805b48987ba5845e8d88f039c47013a0c0025c
 # containerd v2.3.7 pins runc v1.5.2 (script/setup/runc-version).

@@ -1,0 +1,120 @@
+---
+# On the build host, as root with become_user for the build itself. The host
+# must already trust the registry (omerfsen.nico.nico_registry trust tasks).
+
+- name: Git
+  ansible.builtin.apt:
+    name: git
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 600
+
+- name: Checkout of {{ nico_images_version }}
+  ansible.builtin.git:
+    repo: "{{ nico_images_repo }}"
+    dest: "{{ nico_images_src }}"
+    version: "{{ nico_images_version }}"
+    depth: 1
+    recursive: false
+  become: true
+  become_user: "{{ nico_images_user }}"
+  register: nico_images_checkout
+
+- name: The tag is the pinned commit
+  ansible.builtin.assert:
+    that: nico_images_checkout.after == nico_images_commit
+    fail_msg: "{{ nico_images_version }} is {{ nico_images_checkout.after }}, expected {{ nico_images_commit }}."
+    quiet: true
+
+- name: Log directory
+  ansible.builtin.file:
+    path: "{{ nico_images_log_dir }}"
+    state: directory
+    owner: "{{ nico_images_user }}"
+    group: "{{ nico_images_user }}"
+    mode: "0755"
+
+# ── Build host bootstrap (NICo's own script), once ───────────────────────
+- name: Has the build host been bootstrapped?
+  ansible.builtin.stat:
+    path: "{{ nico_images_log_dir }}/bootstrap.done"
+  register: nico_images_bootstrapped
+
+- name: Bootstrap the build host (scripts/setup-build-host.sh)
+  ansible.builtin.shell: |
+    set -o pipefail
+    ./scripts/setup-build-host.sh 2>&1 | tee {{ nico_images_log_dir }}/bootstrap.log
+    touch {{ nico_images_log_dir }}/bootstrap.done
+  args:
+    chdir: "{{ nico_images_src }}"
+    executable: /bin/bash
+  become: true
+  become_user: "{{ nico_images_user }}"
+  when: not nico_images_bootstrapped.stat.exists
+  changed_when: true
+
+# The script asks for a reboot, for its docker group membership and userns
+# sysctl. Rebooting is not safe here: the bootstrap installs systemd-boot,
+# which takes over the UEFI boot path of an Ubuntu cloud image, and the VM
+# comes back in the firmware menu with nothing to boot. Apply both without a
+# reboot instead: load the sysctl, and open a new SSH session so the build
+# user's groups are read again. The build VM is thrown away afterwards.
+- name: Load the bootstrap's sysctl
+  ansible.builtin.command: sysctl --system
+  when: not nico_images_bootstrapped.stat.exists
+  changed_when: true
+
+- name: New SSH session, for the docker group
+  ansible.builtin.meta: reset_connection
+
+- name: The build user can use Docker
+  ansible.builtin.command: docker info --format '{{ "{{" }}.ServerVersion{{ "}}" }}'
+  become: true
+  become_user: "{{ nico_images_user }}"
+  changed_when: false
+
+# ── Build and push ───────────────────────────────────────────────────────
+- name: Build and push the images
+  ansible.builtin.shell: |
+    set -o pipefail
+    source "$HOME/.cargo/env"
+    direnv allow . >/dev/null 2>&1
+    direnv exec . make {{ item.target }} IMAGE_REGISTRY={{ nico_images_registry }} \
+      IMAGE_TAG={{ nico_images_tag }} {{ item.arches }} \
+      > {{ nico_images_log_dir }}/{{ item.target }}.log 2>&1
+  args:
+    chdir: "{{ nico_images_src }}"
+    executable: /bin/bash
+  become: true
+  become_user: "{{ nico_images_user }}"
+  loop:
+    - {target: images, arches: NICO_ARCHES=amd64}
+    - {target: images-boot-artifacts, arches: BOOT_ARTIFACTS_ARCHES=amd64}
+  loop_control: {label: "make {{ item.target }}"}
+  async: "{{ nico_images_build_timeout }}"
+  poll: 60
+  changed_when: true
+  when: nico_images_missing | default(nico_images_names) | length > 0
+
+# setup.sh deploys the Core image as <registry>/nvmetal-carbide; the
+# Makefile publishes it as <registry>/nico. Same manifest, second name.
+- name: Publish the Core image as nvmetal-carbide
+  ansible.builtin.command: >-
+    docker buildx imagetools create
+    -t {{ nico_images_registry }}/nvmetal-carbide:{{ nico_images_tag }}
+    {{ nico_images_registry }}/nico:{{ nico_images_tag }}
+  become: true
+  become_user: "{{ nico_images_user }}"
+  changed_when: true
+  when: nico_images_missing | default(nico_images_names) | length > 0
+
+- name: Every image is in the registry now
+  ansible.builtin.include_tasks: check.yml
+
+- name: Nothing missing
+  ansible.builtin.assert:
+    that: nico_images_missing | length == 0
+    fail_msg: >-
+      Still missing from {{ nico_images_registry }}: {{ nico_images_missing | join(', ') }}.
+      Logs: {{ nico_images_log_dir }} on {{ inventory_hostname }}.
+    quiet: true

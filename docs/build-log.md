@@ -145,3 +145,31 @@ by pod IP, resolved `kubernetes.default.svc.cluster.local` (10.96.0.1), and
 fetched `https://api.github.com/zen` through the masquerade. 21 pods
 Running, every `tigerastatus` Available. Disk used: about 3 GiB per node
 VM so far.
+
+## Step 5: The lab registry (2026-11-03)
+
+NICo publishes no public images, so the lab hosts its own registry: CNCF
+distribution 3.1.2 (`registry:3.1.2`, pinned by digest) in a container run by
+`nico-registry.service` on dragon, host networking, listening only on
+`192.168.91.1:5000` (the host's address on `nico-site`). TLS comes from a lab
+CA made once with openssl (`/etc/nico-registry/pki`); no authentication,
+since only the lab networks reach it. The unit waits for the bridge address
+before starting, because libvirt brings the bridge up.
+
+Role `nico_registry`: `main` on the host, `trust` (`tasks_from: trust.yml`)
+on lab machines: the CA in the system store, containerd
+(`/etc/containerd/certs.d/192.168.91.1:5000/hosts.toml` + `ca.crt`) and
+Docker (`/etc/docker/certs.d/...`). containerd reads `certs.d` per pull, so
+no restart. `cluster.yml` now applies the trust on the site nodes when the
+CA exists, so `kvm.yml` runs network, registry, cluster, images in that
+order.
+
+```shell
+ansible-playbook -i inventory/kvm playbooks/registry.yml
+```
+
+**Failure:** "Docker on the host trusts it" failed: `copy` does not create
+the parent directory `/etc/docker/certs.d/192.168.91.1:5000/`. **Fix:** a
+`file` task creates it first. Rerun `changed=0`. Check: `curl` with the lab
+CA gets `{"repositories":[]}`; without it the TLS handshake fails; a site
+node gets HTTP 200 from `/v2/`.

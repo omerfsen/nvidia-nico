@@ -1,0 +1,23 @@
+---
+# A private OCI registry on the KVM host for the NICo images: CNCF
+# distribution in a container, TLS from a lab CA made here, listening on the
+# host's address on the site network only. No authentication: it is reachable
+# only from the lab networks.
+
+# distribution v3.1.2 (released 2026-09-24), pinned by index digest.
+nico_registry_image: docker.io/library/registry:3.1.2@sha256:d4032d4cc323c1731c707931ecada07a53076eac38e3b61ae57533f170f2c6c3
+
+# Address and port it listens on (host networking). The address must be on
+# the host already (the site network's bridge); the service waits for it.
+nico_registry_address: 192.168.91.1
+nico_registry_port: 5000
+# The bridge that carries nico_registry_address.
+nico_registry_interface: virbr-nicosite
+
+nico_registry_data_dir: /var/lib/nico-registry
+nico_registry_pki_dir: /etc/nico-registry/pki
+nico_registry_ca_days: 3650
+nico_registry_cert_days: 825
+
+# Derived: host:port, as image references and trust directories name it.
+nico_registry_host: "{{ nico_registry_address }}:{{ nico_registry_port }}"

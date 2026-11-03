@@ -1,6 +1,7 @@
 ---
 # The NICo site cluster: three Ubuntu 24.04 VMs on the site network, then
 # kubeadm and Calico on them. The kubeconfig lands in nico_kvm_kubeconfig.
+# With the lab registry in place (registry.yml), the nodes trust its CA.
 #
 #   ansible-playbook -i inventory/kvm omerfsen.nico.cluster
 
@@ -9,6 +10,17 @@
   become: true
   gather_facts: false
   tasks:
+    - name: Is the lab registry's CA there?
+      ansible.builtin.stat:
+        path: "{{ nico_kvm_registry_ca }}"
+      register: nico_kvm_ca_file
+
+    - name: Read the lab CA
+      ansible.builtin.slurp:
+        src: "{{ nico_kvm_registry_ca }}"
+      register: nico_kvm_ca
+      when: nico_kvm_ca_file.stat.exists
+
     - name: Create each node VM
       ansible.builtin.include_role:
         name: omerfsen.nvke.libvirt_vm
@@ -34,6 +46,7 @@
         ansible_user: ubuntu
         ansible_ssh_private_key_file: "{{ nico_kvm_ssh_key_dir | expanduser }}/{{ item.name }}_ed25519"
         ansible_python_interpreter: /usr/bin/python3
+        nico_registry_ca_pem: "{{ (nico_kvm_ca.content | b64decode) if nico_kvm_ca_file.stat.exists else '' }}"
       loop: "{{ nico_kvm_nodes }}"
       loop_control: {label: "{{ item.name }}"}
       changed_when: false
@@ -58,3 +71,12 @@
         name: omerfsen.nico.nico_cluster
       vars:
         nico_cluster_kubeconfig: "{{ nico_kvm_kubeconfig }}"
+
+    - name: Trust the lab registry
+      ansible.builtin.include_role:
+        name: omerfsen.nico.nico_registry
+        tasks_from: trust.yml
+      vars:
+        nico_registry_address: "{{ nico_kvm_registry_address }}"
+        nico_registry_port: "{{ nico_kvm_registry_port }}"
+      when: nico_registry_ca_pem | length > 0
