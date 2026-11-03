@@ -1,0 +1,70 @@
+diff --git a/crates/bmc-mock/src/lib.rs b/crates/bmc-mock/src/lib.rs
+index 52aa56056..b717eae22 100644
+--- a/crates/bmc-mock/src/lib.rs
++++ b/crates/bmc-mock/src/lib.rs
+@@ -319,6 +319,16 @@ pub trait Callbacks: Send + Sync + 'static {
+     ) -> impl Future<Output = Result<(), ActionError>> + Send;
+ 
+     fn state_refresh_indication(&self);
++
++    /// Whether an accepted reset that starts or restarts the host should
++    /// raise [`BmcEvent::PowerOn`] on the BMC state, which completes pending
++    /// BIOS jobs as a real BMC does when the host restarts. Embedders that
++    /// drive the host lifecycle themselves (machine-a-tron) raise the event
++    /// when their simulated host powers on; a standalone backend has no other
++    /// place to raise it.
++    fn power_on_event_on_reset(&self) -> bool {
++        false
++    }
+ }
+ 
+ pub trait HostnameQuerying: std::fmt::Debug + Send + Sync {
+diff --git a/crates/bmc-mock/src/libvirt.rs b/crates/bmc-mock/src/libvirt.rs
+index 214ef441e..2e0ecbefa 100644
+--- a/crates/bmc-mock/src/libvirt.rs
++++ b/crates/bmc-mock/src/libvirt.rs
+@@ -662,6 +662,10 @@ impl Callbacks for LibvirtCallbacks {
+         *self.power_state.read().expect("power state lock poisoned")
+     }
+ 
++    fn power_on_event_on_reset(&self) -> bool {
++        true
++    }
++
+     async fn computer_system_reset(
+         &self,
+         reset_type: ResourceResetType,
+diff --git a/crates/bmc-mock/src/redfish/computer_system.rs b/crates/bmc-mock/src/redfish/computer_system.rs
+index f202a15d5..6cbefcc7a 100644
+--- a/crates/bmc-mock/src/redfish/computer_system.rs
++++ b/crates/bmc-mock/src/redfish/computer_system.rs
+@@ -31,8 +31,8 @@ use crate::bmc_state::BmcState;
+ use crate::json::{JsonExt, JsonPatch, json_patch};
+ use crate::redfish::Builder;
+ use crate::{
+-    ActionError, BootOptionKind, Callbacks, MachineRouterOptions, MockPowerState,
+-    POWER_CYCLE_DELAY, http, redfish,
++    ActionError, BmcEvent, BootOptionKind, Callbacks, MachineRouterOptions, MockPowerState,
++    POWER_CYCLE_DELAY, ResourceResetType, http, redfish,
+ };
+ 
+ pub(super) fn collection() -> redfish::Collection<'static> {
+@@ -932,6 +932,18 @@ async fn post_reset_system<C: Callbacks>(
+                 &resource(&system_id).odata_id,
+                 reset_type,
+             ));
++            if callbacks.power_on_event_on_reset()
++                && matches!(
++                    reset_type,
++                    ResourceResetType::On
++                        | ResourceResetType::ForceOn
++                        | ResourceResetType::ForceRestart
++                        | ResourceResetType::GracefulRestart
++                        | ResourceResetType::PowerCycle
++                )
++            {
++                state.on_event(&BmcEvent::PowerOn);
++            }
+             json!({}).into_ok_response()
+         }
+         Err(ActionError::BadRequest(_)) => StatusCode::BAD_REQUEST.into_response(),

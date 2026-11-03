@@ -60,6 +60,10 @@ nico_kvm_registry_ca: /etc/nico-registry/pki/ca.crt
 
 # NICo release whose images are built.
 nico_kvm_nico_version: v2.3.0
+# Published copies of the lab's images (unofficial builds of that release
+# from source, plus the patched bmc-mock and the unbound image). Missing
+# images are copied from here before anything is built; "" always builds.
+nico_kvm_images_seed: docker.io/omerfsen
 
 # The throwaway VM the images are built on (NICo asks for 150 GB free disk).
 # Removed after a successful build unless nico_kvm_build_vm_keep is true.
@@ -71,3 +75,19 @@ nico_kvm_build_vm:
   memory_mb: 32768
   disk_gb: 200
 nico_kvm_build_vm_keep: false
+
+# The servers NICo manages: VMs on the HostInband network, each with a mock
+# Redfish BMC (bmc-mock, Dell R750 profile, no DPUs). index is bmc-mock's
+# instance index (unique identities); bmc_ip sits in the segment's reserved
+# range (.1-.10 are the gateway and the relay, see nico_hostinband_networks).
+nico_kvm_servers:
+  - name: nico-server-01
+    index: 1
+    bmc_ip: "{{ nico_kvm_inband_subnet }}.11"
+    vcpus: 4
+    # NICo's scout downloads its 1.9 GB root squashfs into /run, a tmpfs
+    # sized from RAM: with 8 GiB it fails ("curl: (23) Failure writing output").
+    memory_mb: 16384
+    disk_gb: 60
+# nico-dhcp's VIP, where the segment's DHCP relay sends requests.
+nico_kvm_dhcp_vip: "{{ nico_kvm_site_subnet }}.200"

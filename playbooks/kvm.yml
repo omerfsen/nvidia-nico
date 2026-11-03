@@ -1,7 +1,7 @@
 ---
 # The NICo lab on KVM/libvirt, in order: networks, the lab registry, the
 # site cluster (its nodes trust the registry), NICo's images, then NICo's
-# control plane.
+# control plane, then the servers NICo manages.
 #
 #   ansible-playbook -i inventory/kvm omerfsen.nico.kvm
 
@@ -19,3 +19,6 @@
 
 - name: NICo control plane
   ansible.builtin.import_playbook: nico.yml
+
+- name: Servers, registered with NICo
+  ansible.builtin.import_playbook: servers.yml

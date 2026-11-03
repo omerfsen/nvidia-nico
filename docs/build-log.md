@@ -239,6 +239,90 @@ failed on every node: `dial tcp 0.0.0.0:443`. The name is a CNAME to
 (the `nico` role overrides the chart's three image repositories), so the lab
 does not depend on the LAN's DNS block list.
 
+## Step 8: The servers and their mock BMCs (2026-11-03)
+
+bmc-mock is not part of `make images`; it has its own Dockerfile
+(`crates/bmc-mock/Dockerfile`, Rust built inside Docker, no emulation). It
+was built on dragon from the v2.3.0 checkout while the build VM compiled the
+rest, and pushed as `192.168.91.1:5000/nico/bmc-mock:v2.3.0` (258 MB).
+
+What bmc-mock generates for the Dell R750 profile, zero DPUs, instance index
+1 (read from a throwaway container on the internal backend):
+
+| Item | Value |
+|---|---|
+| Model, serial | Dell PowerEdge R750, `020000010001` |
+| BMC NIC `NIC.1` | `02:00:00:01:00:01` |
+| Host NIC `NIC.Slot.1-1` (the non-DPU NIC) | `02:00:00:01:00:02` |
+| Embedded NICs | `06:00:00:01:01:01`, `06:00:00:01:01:02` |
+
+bmc-mock never infers anything from the VM, so the role gives the VM and the
+BMC exactly these MACs, and checks the BMC reports the VM's NIC.
+
+How the pieces sit on `nico-inband` (role `nico_server`):
+
+- **Mock BMC per server** in its own network namespace `bmc-<server>`: a
+  veth into `virbr-nicoib` with the BMC MAC and the BMC's IP
+  (`192.168.92.11`), the bmc-mock binary taken out of its image and run with
+  `ip netns exec` by `nico-bmc@<server>.service`, port 443 (NICo's default
+  BMC port, `crates/api-model/src/machine/mod.rs:1268`), libvirt backend
+  over the host's socket. bmc-mock has no bind-address option, so a separate
+  namespace is the way to give each BMC its own address and MAC on the L2,
+  as on real hardware. Docker networking on a libvirt bridge was ruled out:
+  Docker's FORWARD rules could cut the VMs' traffic.
+- **The server VM**: q35, OVMF (no Secure Boot), swtpm TPM 2.0 (CRB; libvirt
+  creates its EK certificate with `swtpm_localca`), a blank 60 GB disk,
+  network boot first, NIC MAC from the table, defined **shut off**: NICo
+  powers it through the BMC.
+- **DHCP relay** for the segment: dnsmasq, relay only, in its own namespace
+  `nico-relay` at `192.168.92.2`, forwarding to nico-dhcp's VIP
+  `192.168.91.200`. On the host it would never see nico-dhcp's replies:
+  they enter dragon on `virbr-nicosite`, where libvirt's dnsmasq has UDP 67
+  bound to that device (`ss -ulpn` shows `0.0.0.0%virbr-nicosite:67`).
+
+```shell
+ansible-playbook -i inventory/kvm playbooks/servers.yml
+```
+
+**Failure:** `nico-bmc@nico-server-01` crash-looped: `panicked at
+crates/bmc-mock/src/tls.rs:92: Could not find the crt file for bmc-mock`.
+bmc-mock reads `tls.crt`/`tls.key` from `--cert-path`, else `/opt/carbide`
+or `$REPO_ROOT/crates/bmc-mock`; its image ships none. **Fix:** like a real
+BMC, a self-signed certificate per BMC for its IP, passed with
+`--cert-path`.
+
+**Check (before NICo exists):** Redfish `ComputerSystem.Reset` `On` to
+`https://192.168.92.11` returned 200 and started the VM; it PXE-booted and
+broadcast DHCP from `02:00:00:01:00:02`; the relay forwarded each request to
+`192.168.91.200` (`DHCP relay at 192.168.92.2 -> 192.168.91.200`).
+`ForceOff` stopped it again. Rerun: `changed=0`.
+
+## Step 9: Patching bmc-mock so Dell jobs complete (2026-11-03)
+
+Reading NICo's state machine for a zero-DPU Dell host showed a blocker
+before any host was ingested: NICo sets BIOS attributes, the boot order and
+the UEFI password through Dell iDRAC jobs, and waits for each job to reach
+`Completed` (`crates/machine-controller/src/handler/bios_config.rs:147-152`,
+`crates/machine-controller/src/handler.rs:7903-7921`). bmc-mock creates those
+jobs as `Scheduled` and completes them only on its `BmcEvent::PowerOn`
+(`crates/bmc-mock/src/bmc_state.rs:160-186`). Only machine-a-tron raises that
+event; standalone bmc-mock with the libvirt backend never does, so the host
+would wait in HostInit forever.
+
+**Fix:** a 28-line patch, `roles/nico_images/files/patches/v2.3.0/0001-...patch`:
+a `Callbacks::power_on_event_on_reset()` (default `false`, `true` for the
+libvirt backend), and the Reset handler raises `PowerOn` after an accepted
+`On`, `ForceOn`, `ForceRestart`, `GracefulRestart` or `PowerCycle` when the
+backend asks for it, as a real iDRAC completes pending jobs when the host
+restarts. machine-a-tron and the internal backend behave as before. The
+image is tagged `bmc-mock:v2.3.0-nico.1`; `nico_images` builds it from a
+separate worktree with the patches applied, and only builds targets whose
+images are missing.
+
+**Check:** `POST .../iDRAC.Embedded.1/Jobs` on `nico-server-01`'s BMC made
+job `JID_4297...` `Scheduled`; Redfish `On` started the VM and the job read
+`Completed`.
+
 ## Step 10: The NICo control plane (2026-11-03)
 
 Role `nico`, run from dragon against the site cluster (`playbooks/nico.yml`):
@@ -310,3 +394,59 @@ skipped: unchanged fingerprint); the run after that: `changed=0`.
 ```shell
 ansible-playbook -i inventory/kvm playbooks/nico.yml
 ```
+
+## Step 11: NICo ingests the first server (2026-11-03)
+
+Role `nico_ingest` (second play of `playbooks/servers.yml`), from dragon:
+
+- **Admin pod.** NICo's API certificate names only cluster DNS names
+  (`api-lab1.nico.lab`, `nico-api.nico-system.svc.cluster.local`, ...), not
+  its VIP, and `nico-admin-cli` has no option to override the TLS name. So
+  the CLI runs in the cluster: Deployment `nico-lab-admin` with NICo's own
+  Core image (`/opt/carbide/nico-admin-cli`), and a client certificate from
+  NICo's Vault (`vault write nicoca/issue/nico-cli-client`, issued by
+  `site-root`, which nico-api accepts for admin calls), reissued when less
+  than two hours remain. Vault's own certificate has no IP SAN, so `vault`
+  calls inside the pod use `VAULT_ADDR=https://vault.vault.svc:8200`.
+- **Expected machine** per server: BMC MAC `02:00:00:01:00:01`, fixed BMC IP
+  `192.168.92.11`, chassis serial `020000010001`, user `root` /
+  `factory_password` (bmc-mock's factory account), `dpu_policy ignore`, DPF
+  off, interfaces `host_bmc` (fixed) and `host` `02:00:00:01:00:02`
+  (primary), both on the HostInband segment.
+
+What NICo did with `nico-server-01`, from the mock BMC's and nico-api's logs:
+
+1. Site explorer reached `192.168.92.11:443`, matched the expected machine
+   (vendor Dell), rotated the BMC root password to the site's, explored it.
+2. A ManagedHost with a predicted ID (`fm100p...`), then `DPUDiscovering`
+   (the zero-DPU path), `HostInitializing/PollingBiosSetup`: the Dell BIOS
+   job completed, thanks to the bmc-mock patch (step 9).
+3. `WaitingForDiscovery`: NICo powered the VM on through the BMC. Its DHCP
+   went through the relay (`192.168.92.2 -> 192.168.91.200`), Kea offered
+   `192.168.92.10` with an HTTP boot URL, OVMF's UEFI HTTP boot fetched
+   `ipxe.efi` from nico-pxe, iPXE asked `/api/v0/pxe/boot` and loaded
+   `scout.efi` and `scout.squashfs`.
+4. Scout called DiscoverMachine with the swtpm EK certificate; the ID became
+   the stable, TPM-derived `fm100htm66t3t4...`. No TPM CA had to be trusted:
+   with attestation off, an unknown EK CA only matters for measured boot.
+5. `WaitingForCleanup/HostCleanup`, discovery again, `WaitingForLockdown`,
+   `BomValidating` (off), machine validation, `Discovered`, **Ready** at
+   19:15, about 25 minutes after the expected machine was added (including
+   the two fixes below). Scout reported the real hardware: `QEMU`, `Ubuntu
+   24.04 PC (Q35 + ICH9, 2009)`, BIOS `2024.02-2ubuntu0.10`.
+
+**Failure 1:** UEFI HTTP boot got `404` for
+`/public/blobs/internal/x86_64/ipxe.efi`. The boot artifacts had never
+reached nico-pxe's volume (the wrong path in NICo's example, see step 10
+failure 3). **Fix:** copy to `/forge-boot-artifacts/blobs/internal/`.
+
+**Failure 2:** scout's loader failed: `LOADER: curl error: curl: (23)
+Failure writing output to destination`. It downloads the 1.9 GB
+`scout.squashfs` into `/run/scout-rootfs.squashfs`
+(`pxe/common_files/scout-loader-rclocal:25,154`), a tmpfs sized from RAM;
+with 8 GiB it does not fit. **Fix:** 16 GiB for server VMs (default in
+`nico_server` and the inventory); the existing VM was resized with
+`virsh setmaxmem/setmem --config` while off.
+
+Rerun of `servers.yml`: the first adopted the hand-made admin pod, the
+second `changed=0`.

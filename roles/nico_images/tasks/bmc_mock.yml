@@ -1,0 +1,53 @@
+---
+# bmc-mock from a separate worktree of the same commit, so the patches never
+# touch the tree the other images are built from.
+
+- name: Worktree for bmc-mock  # noqa: command-instead-of-module
+  ansible.builtin.command: >-
+    git -C {{ nico_images_src }} worktree add --detach --force
+    {{ nico_images_bmc_mock_src }} {{ nico_images_commit }}
+  args:
+    creates: "{{ nico_images_bmc_mock_src }}/crates/bmc-mock/Dockerfile"
+  become: true
+  become_user: "{{ nico_images_user }}"
+
+- name: Patches for {{ nico_images_version }}
+  ansible.builtin.copy:
+    src: "patches/{{ nico_images_version }}/"
+    dest: "{{ nico_images_log_dir }}/patches/"
+    mode: "0644"
+  register: nico_images_patches
+
+- name: Apply them to a clean tree
+  ansible.builtin.shell: |
+    set -euo pipefail
+    git checkout -- . && git clean -fdq
+    for p in {{ nico_images_log_dir }}/patches/*.patch; do
+      [ -e "$p" ] || continue
+      git apply --verbose "$p"
+    done
+  args:
+    chdir: "{{ nico_images_bmc_mock_src }}"
+    executable: /bin/bash
+  become: true
+  become_user: "{{ nico_images_user }}"
+  changed_when: true
+
+- name: Build and push bmc-mock:{{ nico_images_bmc_mock_tag }}
+  ansible.builtin.shell: |
+    set -o pipefail
+    {
+      docker build -f crates/bmc-mock/Dockerfile \
+        --build-arg VERSION={{ nico_images_bmc_mock_tag }} \
+        --build-arg CI_COMMIT_SHORT_SHA={{ nico_images_commit[:8] }} \
+        -t {{ nico_images_registry }}/bmc-mock:{{ nico_images_bmc_mock_tag }} .
+      docker push {{ nico_images_registry }}/bmc-mock:{{ nico_images_bmc_mock_tag }}
+    } > {{ nico_images_log_dir }}/bmc-mock.log 2>&1
+  args:
+    chdir: "{{ nico_images_bmc_mock_src }}"
+    executable: /bin/bash
+  become: true
+  become_user: "{{ nico_images_user }}"
+  async: "{{ nico_images_build_timeout }}"
+  poll: 30
+  changed_when: true

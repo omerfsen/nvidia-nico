@@ -1,0 +1,121 @@
+---
+- name: Environment for kubectl
+  ansible.builtin.set_fact:
+    nico_ingest_env:
+      KUBECONFIG: "{{ nico_ingest_kubeconfig | expanduser }}"
+    nico_ingest_cli: >-
+      kubectl -n {{ nico_ingest_namespace }} exec deploy/nico-lab-admin --
+      /opt/carbide/nico-admin-cli
+
+# ── Admin client certificate ─────────────────────────────────────────────
+- name: Hours left on the admin certificate
+  ansible.builtin.shell: |
+    set -o pipefail
+    crt=$(kubectl -n {{ nico_ingest_namespace }} get secret nico-lab-admin-cert -o jsonpath='{.data.tls\.crt}' 2>/dev/null | base64 -d)
+    [ -n "$crt" ] || { echo 0; exit 0; }
+    end=$(date -d "$(openssl x509 -noout -enddate <<<"$crt" | cut -d= -f2)" +%s)
+    echo $(( (end - $(date +%s)) / 3600 ))
+  args: {executable: /bin/bash}
+  environment: "{{ nico_ingest_env }}"
+  register: nico_ingest_cert_hours
+  changed_when: false
+
+- name: Issue a new admin certificate from Vault
+  when: nico_ingest_cert_hours.stdout | int < nico_ingest_cert_min_hours
+  ansible.builtin.shell: |
+    set -euo pipefail
+    token=$(kubectl -n vault get secret vaultroottoken -o jsonpath='{.data.token}' | base64 -d)
+    issued=$(kubectl -n vault exec vault-0 -c vault -- env VAULT_TOKEN="$token" \
+      VAULT_ADDR=https://vault.vault.svc:8200 vault write -format=json \
+      nicoca/issue/nico-cli-client common_name={{ nico_ingest_cert_cn }} ttl={{ nico_ingest_cert_ttl }})
+    dir=$(mktemp -d); trap 'rm -rf "$dir"' EXIT; chmod 700 "$dir"
+    jq -r .data.certificate <<<"$issued" > "$dir/tls.crt"
+    jq -r .data.private_key <<<"$issued" > "$dir/tls.key"
+    jq -r '(.data.ca_chain // [.data.issuing_ca]) | join("\n")' <<<"$issued" > "$dir/ca.crt"
+    kubectl -n {{ nico_ingest_namespace }} create secret generic nico-lab-admin-cert \
+      --from-file="$dir/tls.crt" --from-file="$dir/tls.key" --from-file="$dir/ca.crt" \
+      --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+    # The pod reads the files at start; restart it to pick up the new ones.
+    kubectl -n {{ nico_ingest_namespace }} rollout restart deploy/nico-lab-admin >/dev/null 2>&1 || true
+  args: {executable: /bin/bash}
+  environment: "{{ nico_ingest_env }}"
+  changed_when: true
+  no_log: true
+
+# ── Admin pod ────────────────────────────────────────────────────────────
+- name: Admin pod manifest
+  ansible.builtin.set_fact:
+    nico_ingest_manifest: "{{ lookup('ansible.builtin.template', 'admin.yaml.j2') }}"
+
+- name: Admin pod
+  ansible.builtin.shell: |
+    set -uo pipefail
+    m=$(cat)
+    kubectl diff --server-side -f - <<<"$m" >/dev/null 2>&1; rc=$?
+    [ "$rc" -eq 0 ] && exit 0
+    kubectl apply --server-side -f - <<<"$m" >/dev/null && echo applied
+  args:
+    executable: /bin/bash
+    stdin: "{{ nico_ingest_manifest }}"
+  environment: "{{ nico_ingest_env }}"
+  register: nico_ingest_admin
+  changed_when: "'applied' in nico_ingest_admin.stdout"
+
+- name: Admin pod is ready
+  ansible.builtin.command: kubectl -n {{ nico_ingest_namespace }} rollout status deploy/nico-lab-admin --timeout=180s
+  environment: "{{ nico_ingest_env }}"
+  changed_when: false
+
+# ── Expected machines ────────────────────────────────────────────────────
+- name: Expected machines NICo has
+  ansible.builtin.shell: |
+    set -o pipefail
+    {{ nico_ingest_cli }} -f json expected-machine show 2>/dev/null | grep -v IGNORING
+  args: {executable: /bin/bash}
+  environment: "{{ nico_ingest_env }}"
+  register: nico_ingest_em
+  changed_when: false
+
+- name: Register each server that is not expected yet
+  ansible.builtin.command:
+    argv: >-
+      {{ (nico_ingest_cli | split) + [
+          'expected-machine', 'add',
+          '--bmc-mac-address', nico_ingest_bmc_mac,
+          '--bmc-username', nico_ingest_bmc_username,
+          '--bmc-password', nico_ingest_bmc_password,
+          '--chassis-serial-number', '0200000100%02x' | format(item.index | int),
+          '--bmc-ip-address', item.bmc_ip,
+          '--bmc-ip-allocation', 'fixed',
+          '--dpu-policy', 'ignore',
+          '--dpf-enabled', 'false',
+          '--meta-name', item.name,
+          '--interfaces', nico_ingest_interfaces | to_json] }}
+  vars:
+    nico_ingest_bmc_mac: "{{ '02:00:00:%02x:00:01' | format(item.index | int) }}"
+    nico_ingest_interfaces:
+      - {mac_address: "{{ nico_ingest_bmc_mac }}", role: host_bmc, ip_allocation: fixed, fixed_ip: "{{ item.bmc_ip }}", network_segment_type: 3}
+      - {mac_address: "{{ '02:00:00:%02x:00:02' | format(item.index | int) }}", role: host, primary: true, network_segment_type: 3}
+  environment: "{{ nico_ingest_env }}"
+  loop: "{{ nico_ingest_servers }}"
+  loop_control: {label: "{{ item.name }}"}
+  when: >-
+    ('02:00:00:%02x:00:01' | format(item.index | int))
+    not in ((nico_ingest_em.stdout | from_json).expected_machines | default([]) | map(attribute='bmc_mac_address') | list)
+  changed_when: true
+  no_log: false
+
+# ── Ready ────────────────────────────────────────────────────────────────
+- name: Every server is Ready in NICo
+  ansible.builtin.shell: |
+    set -o pipefail
+    {{ nico_ingest_cli }} -f json machine show 2>/dev/null | grep -v IGNORING \
+      | jq -r '[.machines[] | select(.state == "Ready") | .metadata.name // empty] | join(" ")'
+  args: {executable: /bin/bash}
+  environment: "{{ nico_ingest_env }}"
+  register: nico_ingest_ready
+  changed_when: false
+  retries: "{{ (nico_ingest_ready_timeout | int / 30) | int }}"
+  delay: 30
+  until: nico_ingest_servers | map(attribute='name') | difference(nico_ingest_ready.stdout.split()) | length == 0
+  when: nico_ingest_ready_timeout | int > 0

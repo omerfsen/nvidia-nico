@@ -1,0 +1,134 @@
+---
+# One server: a blank-disk UEFI VM with a TPM on the HostInband network,
+# defined shut off (NICo powers it through the BMC), and its mock BMC.
+
+- name: Look up the VM {{ nico_server.name }}
+  ansible.builtin.command: virsh dominfo {{ nico_server.name }}
+  register: nico_server_dominfo
+  changed_when: false
+  failed_when: false
+
+- name: Check passed-through devices are on vfio-pci for {{ nico_server.name }}
+  ansible.builtin.shell: |
+    set -o pipefail
+    basename "$(readlink -f /sys/bus/pci/devices/{{ item }}/driver 2>/dev/null)" 2>/dev/null || echo none
+  args: {executable: /bin/bash}
+  loop: "{{ nico_server.hostdevs | default([]) }}"
+  register: nico_server_hostdev_drivers
+  changed_when: false
+  failed_when: nico_server_hostdev_drivers.stdout != 'vfio-pci'
+
+- name: Define the VM for {{ nico_server.name }}
+  when: nico_server_dominfo.rc != 0
+  block:
+    - name: Blank disk for {{ nico_server.name }}
+      ansible.builtin.command: >-
+        qemu-img create -f qcow2 {{ nico_server_disk_path }}/{{ nico_server.name }}.qcow2
+        {{ nico_server.disk_gb | default(nico_server_disk_gb) }}G
+      args:
+        creates: "{{ nico_server_disk_path }}/{{ nico_server.name }}.qcow2"
+
+    # Network boot first; NICo's BMC calls change the order later. q35 has
+    # the SATA controller bmc-mock attaches virtual media to.
+    - name: Domain definition for {{ nico_server.name }}
+      ansible.builtin.command: >-
+        virt-install --print-xml
+        --name {{ nico_server.name }}
+        --vcpus {{ nico_server.vcpus | default(nico_server_vcpus) }}
+        --memory {{ nico_server.memory_mb | default(nico_server_memory_mb) }}
+        --cpu host-passthrough
+        --machine q35
+        --boot network,hd,loader={{ nico_server_ovmf_code }},loader.readonly=yes,loader.type=pflash,nvram.template={{ nico_server_ovmf_vars }}
+        --disk path={{ nico_server_disk_path }}/{{ nico_server.name }}.qcow2,format=qcow2,bus=virtio
+        --network network={{ nico_server_network }},model=virtio,mac={{ nico_server.host_mac }}
+        --tpm backend.type=emulator,backend.version=2.0,model=tpm-crb
+        {% for dev in nico_server.hostdevs | default([]) %}--hostdev {{ dev }} --xml ./devices/hostdev[{{ loop.index }}]/@managed=no {% endfor %}
+        --graphics none
+        --console pty,target_type=serial
+        --osinfo linux2022
+        --noautoconsole
+      register: nico_server_xml
+      changed_when: false
+
+    - name: Write the definition for {{ nico_server.name }}
+      ansible.builtin.copy:
+        dest: "/etc/nico/{{ nico_server.name }}.xml"
+        content: "{{ nico_server_xml.stdout }}"
+        mode: "0644"
+
+    - name: Define it (shut off) for {{ nico_server.name }}
+      ansible.builtin.command: virsh define /etc/nico/{{ nico_server.name }}.xml
+      changed_when: true
+
+# ── Its BMC ──────────────────────────────────────────────────────────────
+- name: BMC namespace settings for {{ nico_server.name }}
+  ansible.builtin.copy:
+    dest: "/etc/nico/netns/bmc-{{ nico_server.name }}.env"
+    content: |
+      BRIDGE={{ nico_server_bridge }}
+      ADDRESS={{ nico_server.bmc_ip }}
+      PREFIX={{ nico_server_prefix }}
+      GATEWAY={{ nico_server_gateway }}
+      MAC={{ nico_server.bmc_mac }}
+    mode: "0644"
+  register: nico_server_bmc_netns_env
+
+# Like a real BMC: a self-signed certificate for its address.
+- name: BMC certificate directory for {{ nico_server.name }}
+  ansible.builtin.file:
+    path: "/etc/nico/bmc/{{ nico_server.name }}"
+    state: directory
+    mode: "0700"
+
+- name: BMC self-signed certificate for {{ nico_server.name }}
+  ansible.builtin.command: >-
+    openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 3650
+    -subj "/CN={{ nico_server.bmc_ip }}"
+    -addext subjectAltName=IP:{{ nico_server.bmc_ip }}
+    -keyout /etc/nico/bmc/{{ nico_server.name }}/tls.key
+    -out /etc/nico/bmc/{{ nico_server.name }}/tls.crt
+  args:
+    creates: "/etc/nico/bmc/{{ nico_server.name }}/tls.crt"
+  register: nico_server_bmc_cert
+
+- name: BMC settings for {{ nico_server.name }}
+  ansible.builtin.copy:
+    dest: "/etc/nico/bmc/{{ nico_server.name }}.env"
+    content: |
+      PROFILE={{ nico_server.profile | default(nico_server_profile) }}
+      INDEX={{ nico_server.index }}
+    mode: "0644"
+  register: nico_server_bmc_env
+
+# Not a handler: it is per server (this file runs once per server).
+- name: Rebuild the BMC namespace when its settings changed for {{ nico_server.name }}  # noqa: no-handler
+  ansible.builtin.systemd_service:
+    name: "nico-netns@bmc-{{ nico_server.name }}.service"
+    state: restarted
+  when: nico_server_bmc_netns_env is changed
+
+- name: BMC running for {{ nico_server.name }}
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: >-
+      {{ 'restarted' if (nico_server_bmc_env is changed or nico_server_bmc_netns_env is changed
+                         or nico_server_bmc_cert is changed) else 'started' }}
+  loop:
+    - "nico-netns@bmc-{{ nico_server.name }}.service"
+    - "nico-bmc@{{ nico_server.name }}.service"
+  changed_when: false
+
+# The VM's MAC was derived from the instance index; the BMC must report the
+# same one, or NICo would wait for a host that never DHCPs.
+- name: The BMC reports the VM's NIC for {{ nico_server.name }}
+  ansible.builtin.uri:
+    url: "https://{{ nico_server.bmc_ip }}/redfish/v1/Systems/System.Embedded.1/EthernetInterfaces/NIC.Slot.1-1"
+    validate_certs: false
+  register: nico_server_nic
+  retries: 20
+  delay: 3
+  until: nico_server_nic.status == 200
+  failed_when: >-
+    nico_server_nic.status != 200
+    or (nico_server_nic.json.MACAddress | lower) != nico_server.host_mac
