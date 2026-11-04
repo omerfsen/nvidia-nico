@@ -12,7 +12,8 @@ nico_artifacts_port: 8090
 nico_artifacts_interface: virbr-nicosite
 nico_artifacts_dir: /var/lib/nico-artifacts
 
-# Files to serve: path (relative to the served root), url, sha256.
+# Files to serve: path (relative to the served root), url, sha256. Each
+# image is a build pinned by its checksum.
 nico_artifacts_files:
   # Ubuntu 24.04 LTS server cloud image, release 20261017
   # (https://cloud-images.ubuntu.com/releases/noble/release-20261017/SHA256SUMS).
@@ -24,6 +25,24 @@ nico_artifacts_files:
   - path: os/Rocky-10-GenericCloud-Base-10.2-20260525.0.x86_64.qcow2
     url: https://dl.rockylinux.org/pub/rocky/10.2/images/x86_64/Rocky-10-GenericCloud-Base-10.2-20260525.0.x86_64.qcow2
     sha256: 9fc9e9ff16888bb68ac39b0392e25c9c92684d50c85f1cce6ab549363bbc4b48
+  # Debian 13 (trixie) generic cloud image, build 20261103-2651. "generic",
+  # not "genericcloud": that one has a kernel cut down for VMs, and these
+  # images stand in for bare metal. Debian publishes SHA512SUMS only; this is
+  # the sha256 of the file that matched it.
+  - path: os/debian-13-generic-amd64-20261103-2651.qcow2
+    url: https://cloud.debian.org/images/cloud/trixie/20261103-2651/debian-13-generic-amd64-20261103-2651.qcow2
+    sha256: ee845b8abcc5107441c452a5454a5711b1dabec34b64bc5f370688003d7bf2ff
+  # AlmaLinux 9.8 GenericCloud, build 20261102
+  # (https://repo.almalinux.org/almalinux/9/cloud/x86_64/images/CHECKSUM).
+  - path: os/AlmaLinux-9-GenericCloud-9.8-20261102.x86_64.qcow2
+    url: https://repo.almalinux.org/almalinux/9/cloud/x86_64/images/AlmaLinux-9-GenericCloud-9.8-20261102.x86_64.qcow2
+    sha256: 6f94881458dfe966474544b12e86d078d81a600457188045d317b0ce3c3bdca7
 
+# More files, for what has no public download: path, sha256 and src (a file
+# on this host, copied in) or url.
+nico_artifacts_extra_files: []
+
+# Derived: everything to serve.
+nico_artifacts_all_files: "{{ nico_artifacts_files + nico_artifacts_extra_files }}"
 # Derived: the base URL the servers use.
 nico_artifacts_base_url: "http://{{ nico_artifacts_address }}:{{ nico_artifacts_port }}"

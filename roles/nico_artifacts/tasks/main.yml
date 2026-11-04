@@ -13,7 +13,7 @@
     path: "{{ (nico_artifacts_dir ~ '/' ~ item.path) | dirname }}"
     state: directory
     mode: "0755"
-  loop: "{{ nico_artifacts_files }}"
+  loop: "{{ nico_artifacts_all_files }}"
   loop_control: {label: "{{ item.path }}"}
 
 - name: Files (checksum verified)
@@ -23,7 +23,32 @@
     checksum: "sha256:{{ item.sha256 }}"
     mode: "0644"
     timeout: 300
-  loop: "{{ nico_artifacts_files }}"
+  loop: "{{ nico_artifacts_all_files | selectattr('url', 'defined') }}"
+  loop_control: {label: "{{ item.path }}"}
+
+- name: Checksum of each file already on this host
+  ansible.builtin.stat:
+    path: "{{ item.src }}"
+    checksum_algorithm: sha256
+  loop: "{{ nico_artifacts_all_files | selectattr('src', 'defined') }}"
+  loop_control: {label: "{{ item.path }}"}
+  register: nico_artifacts_local
+
+- name: Each of those is the expected file
+  ansible.builtin.assert:
+    that: item.stat.checksum | default('') == item.item.sha256
+    fail_msg: "{{ item.item.src }} is missing or is not the expected file (sha256 {{ item.item.sha256 }})"
+    quiet: true
+  loop: "{{ nico_artifacts_local.results }}"
+  loop_control: {label: "{{ item.item.path }}"}
+
+- name: Copy them in
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ nico_artifacts_dir }}/{{ item.path }}"
+    remote_src: true
+    mode: "0644"
+  loop: "{{ nico_artifacts_all_files | selectattr('src', 'defined') }}"
   loop_control: {label: "{{ item.path }}"}
 
 - name: A sha256 file next to each, for clients that check
@@ -31,7 +56,7 @@
     dest: "{{ nico_artifacts_dir }}/{{ item.path }}.sha256"
     content: "{{ item.sha256 }}  {{ item.path | basename }}\n"
     mode: "0644"
-  loop: "{{ nico_artifacts_files }}"
+  loop: "{{ nico_artifacts_all_files }}"
   loop_control: {label: "{{ item.path }}"}
 
 - name: Nginx configuration
@@ -62,7 +87,7 @@
   ansible.builtin.uri:
     url: "{{ nico_artifacts_base_url }}/{{ item.path }}"
     method: HEAD
-  loop: "{{ nico_artifacts_files }}"
+  loop: "{{ nico_artifacts_all_files }}"
   loop_control: {label: "{{ item.path }}"}
   register: nico_artifacts_head
   retries: 15

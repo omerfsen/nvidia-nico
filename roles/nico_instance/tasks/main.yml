@@ -227,10 +227,12 @@
     argv: "{{ (nico_instance_cli | split) + ['os-image', 'create', '--id', item.name | to_uuid,
            '--name', item.name, '--tenant-org-id', nico_instance_org,
            '--url', item.url, '--digest', item.digest,
-           '--boot-disk', item.boot_disk, '--rootfs-label', item.rootfs_label,
-           '--bootfs-id', item.bootfs_id, '--efifs-id', item.efifs_id] }}"
+           '--boot-disk', item.boot_disk, '--efifs-id', item.efifs_id]
+           + (['--rootfs-id', item.rootfs_id] if item.rootfs_id is defined else [])
+           + (['--rootfs-label', item.rootfs_label] if item.rootfs_label is defined else [])
+           + (['--bootfs-id', item.bootfs_id] if item.bootfs_id is defined else []) }}"
   environment: "{{ nico_instance_env }}"
-  loop: "{{ nico_instance_os_images }}"
+  loop: "{{ nico_instance_all_os_images }}"
   loop_control: {label: "{{ item.name }}"}
   when: item.name not in (nico_instance_images.stdout | from_json | map(attribute='attributes') | map(attribute='name'))
   changed_when: true
@@ -238,14 +240,14 @@
 - name: Image IDs by name, and each instance's image
   ansible.builtin.set_fact:
     nico_instance_image_ids: >-
-      {{ dict(nico_instance_os_images | map(attribute='name')
-              | zip(nico_instance_os_images | map(attribute='name') | map('to_uuid')))
+      {{ dict(nico_instance_all_os_images | map(attribute='name')
+              | zip(nico_instance_all_os_images | map(attribute='name') | map('to_uuid')))
          | combine(dict(nico_instance_images.stdout | from_json | map(attribute='attributes') | map(attribute='name')
               | zip(nico_instance_images.stdout | from_json | map(attribute='attributes') | map(attribute='id.value')))) }}
     nico_instance_targets: >-
       {%- set out = [] -%}
       {%- for t in nico_instance_targets -%}
-      {%- set img = nico_instance_os_images | selectattr('name', 'eq', t.os | default(nico_instance_os_images[0].name)) | list -%}
+      {%- set img = nico_instance_all_os_images | selectattr('name', 'eq', t.os | default(nico_instance_all_os_images[0].name)) | list -%}
       {%- if img | length == 0 -%}{{ 0 / 0 }}{%- endif -%}
       {%- set _ = out.append(t | combine({'image': img[0]})) -%}
       {%- endfor -%}

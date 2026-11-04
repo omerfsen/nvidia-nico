@@ -28,9 +28,10 @@ nico_instance_operator: nico-lab
 # The OS images NICo can write to a server's disk (served by
 # omerfsen.nico.nico_artifacts); each instance picks one by name (os), the
 # first is the default. digest: plain hex sha256 (the imager picks the
-# algorithm from the length; a "sha256:" prefix breaks it). Both images keep
-# /boot on a partition of its own, which the imager needs by UUID. user: the
-# image's cloud-init default user, who gets the SSH key.
+# algorithm from the length; a "sha256:" prefix breaks it). The imager finds
+# the root filesystem by rootfs_label or, for an image with no label, rootfs_id
+# (its UUID). bootfs_id: only for an image with /boot on a partition of its
+# own. user: the image's cloud-init default user, who gets the SSH key.
 nico_instance_os_images:
   - name: ubuntu-24.04-20261017
     url: http://192.168.91.1:8090/os/ubuntu-24.04-server-cloudimg-amd64-20261017.img
@@ -48,6 +49,26 @@ nico_instance_os_images:
     bootfs_id: ac0faa30-b59a-4f1b-a77b-90cc245d6507
     efifs_id: D779-42D2
     user: rocky
+  - name: debian-13-20261103
+    url: http://192.168.91.1:8090/os/debian-13-generic-amd64-20261103-2651.qcow2
+    digest: ee845b8abcc5107441c452a5454a5711b1dabec34b64bc5f370688003d7bf2ff
+    boot_disk: /dev/vda
+    rootfs_id: 96e538c4-e118-47a5-ad63-ddbd0e67f846
+    efifs_id: 3845-82AF
+    user: debian
+  - name: almalinux-9.8-20261102
+    url: http://192.168.91.1:8090/os/AlmaLinux-9-GenericCloud-9.8-20261102.x86_64.qcow2
+    digest: 6f94881458dfe966474544b12e86d078d81a600457188045d317b0ce3c3bdca7
+    boot_disk: /dev/vda
+    rootfs_id: 9a722aa8-1420-4287-939d-8b17de48d486
+    bootfs_id: c3e7137b-182e-4c4f-b9cb-14018782047e
+    efifs_id: 1560-8FDA
+    user: almalinux
+
+# More images, for what the defaults cannot offer (no public download).
+nico_instance_extra_os_images: []
+# Derived: every image.
+nico_instance_all_os_images: "{{ nico_instance_os_images + nico_instance_extra_os_images }}"
 
 # Servers to provision: server (NICo machine name), hostname the installed
 # OS gets, os (an image name above; default the first). Login with the key

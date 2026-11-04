@@ -12,3 +12,4 @@
     - role: omerfsen.nico.nico_artifacts
       vars:
         nico_artifacts_address: "{{ nico_kvm_site_gateway }}"
+        nico_artifacts_extra_files: "{{ nico_kvm_extra_artifacts | default([]) }}"
