@@ -730,12 +730,13 @@ the file was checked against that and pinned by its sha256.
 the collection cannot ship a path to someone's copy. `nico_artifacts` files can
 now have `src` (a path on the host, copied in once its sha256 matches) instead of
 `url`, and the inventory adds the SLES entries only when `nico_kvm_sles_image` is
-set in `local.yml`. SLES has no `EFI/sles/shim`, so the imager logs that it skips
-the boot entry and the server boots through the ESP's fallback loader. Since
-`/boot/grub` does not exist there (it is `grub2`) and no `bootfs_id` is given, the
-imager also tries to mount the first partition on `/mnt/boot`; that is the BIOS
-boot partition, the mount fails and the script carries on. It worked, but that is
-the imager's fallback rather than a designed path.
+set in `local.yml`. SLES has no `EFI/sles/shim`, and reading `disk_imaging.sh`, that
+means it skips the boot entry and the server boots through the ESP's fallback
+loader. Since `/boot/grub` does not exist there (it is `grub2`) and no `bootfs_id`
+is given, the script also tries to mount the first partition on `/mnt/boot`; that
+is the BIOS boot partition, so the mount should fail and the script carry on. Both
+come from the script, not from watching the imager's log. SLES booted and passed
+every check below, but this is a fallback path rather than a designed one.
 
 **Tested** without the GPU (passthrough was off), with three CPU servers of 12 GiB
 through `-e`, not a change to the defaults. From scratch, `kvm.yml` installed all
