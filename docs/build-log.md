@@ -703,3 +703,61 @@ before REST showed the servers Ready, so the race was real. Released as
 minutes with no failure (Vault initialized on the first try, the guard
 skipped), `nico-ubuntu-01` (Ubuntu 24.04.5) and `nico-rocky-02` (Rocky Linux
 10.2) answering SSH, rerun `changed=0` on every host.
+
+## Step 18: Debian, AlmaLinux and SLES (2026-11-04)
+
+Three more OS images, so the lab covers the main Linux families: Debian 13,
+AlmaLinux 9.8 and SLES 16.0. As with Ubuntu and Rocky, these are the vendors'
+cloud images, pinned by checksum and unchanged.
+
+**They do not look like the first two.** `virt-filesystems` on each:
+
+| | Root filesystem | `/boot` | ESP |
+|---|---|---|---|
+| Debian 13 | ext4, **no label** | on root | `3845-82AF` |
+| AlmaLinux 9.8 | xfs, **no label** | own partition | `1560-8FDA` |
+| SLES 16.0 QU3 | xfs, label `ROOT` | on root | `35ED-7A7C` |
+
+The role passed `--rootfs-label` and `--bootfs-id` for every image. **Fix:** the
+image entries take `rootfs_id` (a UUID, which NICo already accepts) or
+`rootfs_label`, and `bootfs_id` only when `/boot` is separate.
+
+**Debian `generic`, not `genericcloud`.** The second has a kernel cut down for
+VMs; these images stand in for bare metal. Debian publishes only SHA512SUMS, so
+the file was checked against that and pinned by its sha256.
+
+**SLES cannot be downloaded without a SUSE account**, so nothing can fetch it and
+the collection cannot ship a path to someone's copy. `nico_artifacts` files can
+now have `src` (a path on the host, copied in once its sha256 matches) instead of
+`url`, and the inventory adds the SLES entries only when `nico_kvm_sles_image` is
+set in `local.yml`. SLES has no `EFI/sles/shim`, and reading `disk_imaging.sh`, that
+means it skips the boot entry and the server boots through the ESP's fallback
+loader. Since `/boot/grub` does not exist there (it is `grub2`) and no `bootfs_id`
+is given, the script also tries to mount the first partition on `/mnt/boot`; that
+is the BIOS boot partition, so the mount should fail and the script carry on. Both
+come from the script, not from watching the imager's log. SLES booted and passed
+every check below, but this is a fallback path rather than a designed one.
+
+**Tested** without the GPU (passthrough was off), with three CPU servers of 12 GiB
+through `-e`, not a change to the defaults. From scratch, `kvm.yml` installed all
+three first time. On each: hostname from cloud-init, cloud-init `done`, root grown
+to the 60 GB disk, no failed units, sudo, internet, and back after a reboot. Rerun
+`changed=0` on every host. Then the Alma and SLES servers were released (wiped and
+Ready in about 9 minutes) and given Ubuntu 24.04.5 and Rocky Linux 10.2, to check
+the older images still register and install. Not tested: these three on the GPU
+server, and any driver install.
+
+**A correction to step 17: the Vault failure is not a `kubectl exec` race.** It
+came back on the first try here, with the same empty `/tmp/cluster-keys.json` and
+Vault initialized, and this time with the exit code: `command terminated with exit
+code 129`, a process killed by SIGHUP. The Vault chart values in NICo's
+`helm-prereqs/operators/values/vault.yaml` add a `vault-cert-reload` sidecar, with
+`shareProcessNamespace: true`, that runs `kill -s HUP $(pidof vault)` once at start
+and whenever the CA file changes. `vault operator init` runs through `kubectl exec`
+in that same process namespace and is also called `vault`, so if the signal lands
+during the init, the server survives (it reloads) and the client dies after Vault
+has generated the keys. The evidence is the exit code, the sidecar's script and
+its one `SIGHUP sent` log line; it was not reproduced on purpose. The guard from
+step 17 did its job: a rerun reset Vault and installed NICo. It only recovers from
+the failure, though, so the failure itself stays until the sidecar or the script
+is changed.

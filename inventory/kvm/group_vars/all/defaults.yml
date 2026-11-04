@@ -110,6 +110,26 @@ nico_kvm_servers: >-
 # nico-dhcp's VIP, where the segment's DHCP relay sends requests.
 nico_kvm_dhcp_vip: "{{ nico_kvm_site_subnet }}.200"
 
+# SLES 16 (Minimal VM, Cloud, QU3): downloading it takes a SUSE account, so the
+# lab cannot fetch it. Point this at your copy, in local.yml, to add it to the
+# OS images; empty: no SLES. Another build needs its own sha256 and filesystem
+# UUID below (qemu-img, virt-filesystems).
+nico_kvm_sles_image: ""
+nico_kvm_sles_file: SLES-16.0-Minimal-VM.x86_64-Cloud-QU3.qcow2
+nico_kvm_sles_sha256: a80f20e4c66ec6a1c93505ac605855e477c128e51eaec6d3f396d57dafa38fba
+nico_kvm_extra_artifacts: >-
+  {{ [{'path': 'os/' ~ nico_kvm_sles_file, 'src': nico_kvm_sles_image, 'sha256': nico_kvm_sles_sha256}]
+     if nico_kvm_sles_image | length > 0 else [] }}
+nico_kvm_extra_os_images: >-
+  {{ [{'name': 'sles-16.0-qu3',
+       'url': 'http://' ~ nico_kvm_site_gateway ~ ':8090/os/' ~ nico_kvm_sles_file,
+       'digest': nico_kvm_sles_sha256,
+       'boot_disk': '/dev/vda',
+       'rootfs_label': 'ROOT',
+       'efifs_id': '35ED-7A7C',
+       'user': 'sles'}]
+     if nico_kvm_sles_image | length > 0 else [] }}
+
 # Servers NICo provisions an OS onto (playbooks/provision.yml): server
 # name, the hostname each gets and its OS (a name from
 # nico_instance_os_images). Ubuntu 24.04 on the CPU server, Rocky Linux 10.2

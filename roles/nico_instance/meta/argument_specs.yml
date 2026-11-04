@@ -57,9 +57,20 @@ argument_specs:
         type: list
         elements: dict
         description: 'The OS images NICo can write to a server''s disk (served by omerfsen.nico.nico_artifacts):
-          name, url, digest (plain hex sha256), boot_disk, rootfs_label, bootfs_id, efifs_id and user (the
+          name, url, digest (plain hex sha256), boot_disk, rootfs_label or rootfs_id (its UUID, for an image
+          with no label), bootfs_id (only with /boot on a partition of its own), efifs_id and user (the
           image''s cloud-init default user). Each instance picks one by name; the first is the default.
-          Defaults: Ubuntu 24.04 and Rocky Linux 10.2.'
+          Defaults: Ubuntu 24.04, Rocky Linux 10.2, Debian 13 and AlmaLinux 9.8.'
+      nico_instance_extra_os_images:
+        type: list
+        default: []
+        description: More images, in the same form, for what the defaults cannot offer (no public download).
+        elements: dict
+      nico_instance_all_os_images:
+        type: list
+        default: "{{ nico_instance_os_images + nico_instance_extra_os_images }}"
+        description: 'Derived: every image.'
+        elements: dict
       nico_instance_instances:
         type: list
         default: []
