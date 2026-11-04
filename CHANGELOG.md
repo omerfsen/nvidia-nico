@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/omerfsen/nvidia-nico/compare/v0.1.1...v0.2.0) (2026-11-04)
+
+
+### Features
+
+* add Debian, AlmaLinux and SLES OS images ([#24](https://github.com/omerfsen/nvidia-nico/issues/24)) ([65d3f9c](https://github.com/omerfsen/nvidia-nico/commit/65d3f9cf20d9dbb312a2311bc7cb32457001609e))
+
 ## [0.1.1](https://github.com/omerfsen/nvidia-nico/compare/v0.1.0...v0.1.1) (2026-11-03)
 
 
