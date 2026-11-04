@@ -694,3 +694,12 @@ had 107 GB free after its cleanup step; the Rust builds left most of it in
 Docker's build cache. **Fix:** `tools/build-nico-images.sh` prunes the build
 cache once those images are in its local registry, and prints the runner's
 CPUs, memory and disk.
+
+**Result:** the Vault guard, tried on the lab left broken by that failure,
+reset Vault and the same run installed NICo and provisioned both servers
+(29 minutes), rerun `changed=0`. The REST wait retried several times there
+before REST showed the servers Ready, so the race was real. Released as
+0.1.1. Then `main` at 0.1.1 from scratch: `kvm_destroy.yml`, `kvm.yml` in 30
+minutes with no failure (Vault initialized on the first try, the guard
+skipped), `nico-ubuntu-01` (Ubuntu 24.04.5) and `nico-rocky-02` (Rocky Linux
+10.2) answering SSH, rerun `changed=0` on every host.
